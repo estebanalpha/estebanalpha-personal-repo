@@ -1,0 +1,25 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Termux:Boot launcher for shizuku-watchdog.
+# EN: Own dedicated log file (not shared with adb-connect's launcher),
+# truncated on each run so only the current boot cycle is kept.
+# ES: Log propio y dedicado (no compartido con el launcher de
+# adb-connect), truncado en cada corrida — 1 log por ciclo de arranque.
+
+HOME=/data/data/com.termux/files/home
+LOG="$HOME/.local/tmp/boot-shizuku-watchdog.log"
+mkdir -p "$HOME/.local/tmp"
+: > "$LOG"  # 1 log por ejecución
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Boot launcher iniciado" >> "$LOG"
+echo "PATH actual: $PATH" >> "$LOG"
+echo "Verificando binario: $(ls -la $HOME/.local/bin/shizuku-watchdog 2>&1)" >> "$LOG"
+sleep 25
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Lanzando watchdog..." >> "$LOG"
+
+# EN: stdout goes to /dev/null, not this log — the watchdog already
+# writes its own complete history to shizuku-watchdog.log; sending it
+# here too just duplicated every line in both files.
+# ES: el stdout va a /dev/null, no a este log — el watchdog ya escribe
+# su propio historial completo en shizuku-watchdog.log; mandarlo también
+# acá duplicaba cada línea en los dos archivos.
+exec nohup "$HOME/.local/bin/shizuku-watchdog" > /dev/null 2>&1

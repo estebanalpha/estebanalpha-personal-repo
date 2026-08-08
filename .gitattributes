@@ -1,0 +1,26 @@
+# Normalize text files to LF
+* text=auto eol=lf
+
+# Explicit text
+*.md text eol=lf
+*.txt text eol=lf
+*.sh text eol=lf
+*.bash text eol=lf
+control text eol=lf
+postinst text eol=lf
+prerm text eol=lf
+preinst text eol=lf
+postrm text eol=lf
+Packages text eol=lf
+
+# Binary artifacts
+*.deb binary
+*.gz binary
+*.xz binary
+*.dex binary
+*.so binary
+*.apk binary
+*.zip binary
+*.png binary
+*.jpg binary
+*.jpeg binary

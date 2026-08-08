@@ -1,0 +1,10 @@
+Package: local-setup
+Version: 0.2
+Architecture: all
+Maintainer: estebanalpha
+Section: utils
+Priority: optional
+Description: Personal .local folder scaffolding for new Termux devices
+ Creates ~/.local/{bin,lib,tmp,share} plus a short README explaining the
+ convention, and appends a deduplicated PATH block to .bashrc. Does not
+ install or manage tools inside .local, see the repo README.

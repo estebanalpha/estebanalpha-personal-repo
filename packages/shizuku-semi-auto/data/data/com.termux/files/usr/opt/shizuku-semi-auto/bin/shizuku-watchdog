@@ -1,0 +1,76 @@
+#!/data/data/com.termux/files/usr/bin/bash
+ADB=/data/data/com.termux/files/usr/bin/adb
+STATE_FILE=/data/data/com.termux/files/home/.local/tmp/adb-serial.txt
+LOG=/data/data/com.termux/files/home/.local/tmp/shizuku-watchdog.log
+SHIZUKU_SCRIPT="/storage/emulated/0/Android/data/moe.shizuku.privileged.api/start.sh"
+INTERVAL=10
+SETUP_WAIT=180
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
+
+get_serial() {
+    [ -f "$STATE_FILE" ] && cat "$STATE_FILE"
+}
+
+adb_ready() {
+    local serial="$1"
+    [ -z "$serial" ] && return 1
+    timeout 8 $ADB -s "$serial" get-state 2>/dev/null | grep -q "^device$"
+}
+
+shizuku_running() {
+    local serial="$1"
+    timeout 8 $ADB -s "$serial" shell "ps -A 2>/dev/null" 2>/dev/null | grep -q "shizuku_server"
+}
+
+start_shizuku() {
+    local serial="$1"
+    log "Shizuku caído — reiniciando via $serial..."
+    OUT=$(timeout 15 $ADB -s "$serial" shell sh "$SHIZUKU_SCRIPT" 2>&1)
+    log "Output start.sh: $OUT"
+    if echo "$OUT" | grep -q "exit with 0"; then
+        log "Shizuku OK"
+        termux-notification --title "Shizuku" --content "Reiniciado automáticamente" 2>/dev/null
+    else
+        log "Posible error al iniciar Shizuku (ver output arriba)"
+    fi
+}
+
+: > "$LOG"  # 1 log por ejecución: se trunca al arrancar, no se acumula entre boots
+log "======================================"
+log "Watchdog iniciado (PID $$)"
+
+# Esperar a que exista el archivo de estado (creado por adb-connect tras boot)
+elapsed=0
+while [ ! -f "$STATE_FILE" ]; do
+    if [ $elapsed -ge $SETUP_WAIT ]; then
+        log "STATE_FILE no apareció tras ${SETUP_WAIT}s. Corre 'adb-connect' con el cable puesto."
+        log "Watchdog seguirá esperando en background..."
+    fi
+    sleep 5
+    elapsed=$((elapsed + 5))
+    [ $elapsed -ge $SETUP_WAIT ] && SETUP_WAIT=999999  # avisar solo una vez
+done
+
+SERIAL=$(get_serial)
+log "Serial cargado: $SERIAL"
+
+while true; do
+    SERIAL=$(get_serial)
+    if [ -z "$SERIAL" ]; then
+        log "Sin STATE_FILE — esperando adb-connect..."
+        sleep "$INTERVAL"
+        continue
+    fi
+
+    if adb_ready "$SERIAL"; then
+        if shizuku_running "$SERIAL"; then
+            : # todo bien, no logueamos cada check exitoso para no llenar el log
+        else
+            start_shizuku "$SERIAL"
+        fi
+    else
+        log "ADB no responde en $SERIAL (get-state falló o timeout)"
+    fi
+    sleep "$INTERVAL"
+done

@@ -1,0 +1,10 @@
+Package: rish-shizuku
+Version: 1.0.3
+Architecture: all
+Depends: bash
+Maintainer: estebanalpha
+Section: utils
+Priority: optional
+Description: Shizuku rish wrapper for Termux
+ Installs rish in Termux bin and the Shizuku loader in lib/rish.
+ Clears LD_PRELOAD before launching app_process.

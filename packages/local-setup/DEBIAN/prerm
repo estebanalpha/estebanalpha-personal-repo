@@ -1,0 +1,5 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Intentionally does not remove ~/.bashrc content or ~/.local files on
+# uninstall — those are meant to persist as normal user configuration,
+# not package-managed state.
+exit 0

@@ -1,0 +1,49 @@
+Package: local-setup
+Version: 0.2
+Architecture: all
+Maintainer: estebanalpha
+Section: utils
+Priority: optional
+Description: Personal .local folder scaffolding for new Termux devices
+ Creates ~/.local/{bin,lib,tmp,share} plus a short README explaining the
+ convention, and appends a deduplicated PATH block to .bashrc. Does not
+ install or manage tools inside .local, see the repo README.
+Filename: ./local-setup_0.2_all.deb
+Size: 1944
+MD5sum: 87217a0617b2a296dcbc401394d288b9
+SHA1: c96056314c40a771fe1e24460118a91a3e6f6c6a
+SHA256: 73001e3c48515624bffd69114540fcae0a39bdb348e74afc5e135c9746f3a37a
+
+Package: rish-shizuku
+Version: 1.0.3
+Architecture: all
+Depends: bash
+Maintainer: estebanalpha
+Section: utils
+Priority: optional
+Description: Shizuku rish wrapper for Termux
+ Installs rish in Termux bin and the Shizuku loader in lib/rish.
+ Clears LD_PRELOAD before launching app_process.
+Filename: ./rish-shizuku_1.0.3_all.deb
+Size: 5240
+MD5sum: 5df0c9922da56aa186a368b02c2739e1
+SHA1: cd0e7355eb6c421f124e99f661665a771a4fa487
+SHA256: 6700a118d0564598feca12752356d51ae13cdec10f7b4d2634ff17ab1207fdcb
+
+Package: shizuku-semi-auto
+Version: 1.1.1
+Architecture: all
+Maintainer: estebanalpha
+Depends: android-tools
+Section: utils
+Priority: optional
+Description: Semi-automatic Shizuku activation via ADB loopback (Termux:Boot)
+ Runs adb-connect and shizuku-watchdog at boot. Detects when the device is
+ put into "adb tcpip" mode from a second Android device and re-activates
+ Shizuku automatically, without a cable connected long-term.
+Filename: ./shizuku-semi-auto_1.1.1_all.deb
+Size: 5796
+MD5sum: cc0758aafa5041b4ad82d7292987eb4b
+SHA1: 3d86b361feef084649fefab7909670f6b77ff2f1
+SHA256: cde2ecbcbce373639e39ba16151b2936abeb002e90071e69e970ca78d050f3b2
+

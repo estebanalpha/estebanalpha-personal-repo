@@ -1,0 +1,51 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -e
+
+DEST_HOME="/data/data/com.termux/files/home"
+MARKER_START="# >>> local-setup managed block >>>"
+MARKER_END="# <<< local-setup managed block <<<"
+
+mkdir -p "$DEST_HOME/.local/bin" "$DEST_HOME/.local/lib" "$DEST_HOME/.local/tmp" "$DEST_HOME/.local/share"
+
+if [ ! -f "$DEST_HOME/.local/README" ]; then
+    cat > "$DEST_HOME/.local/README" << 'RDME'
+bin/   - personal scripts, wrappers, and tools you author or assemble by hand.
+lib/   - libraries those scripts depend on.
+tmp/   - scratch space (/data/local/tmp is not reachable without adb/root).
+share/ - left for third-party tools that follow the XDG convention on
+         their own (e.g. radare2 uses ~/.local/share/radare2 without
+         being told to).
+
+Nothing here is package-managed. Anything that graduates into a real,
+reusable tool belongs in its own package under $PREFIX, not copied here.
+RDME
+fi
+
+if ! grep -qF "$MARKER_START" "$DEST_HOME/.bashrc" 2>/dev/null; then
+    cat >> "$DEST_HOME/.bashrc" << BLOCK
+$MARKER_START
+case ":\$PATH:" in
+    *":\$HOME/.local/bin:"*) ;;
+    *) export PATH="\$HOME/.local/bin:\$PATH" ;;
+esac
+$MARKER_END
+BLOCK
+fi
+
+cat <<'MSG'
+
+== local-setup installed / instalado ==
+
+EN: ~/.local/{bin,lib,tmp,share} created, with a short README explaining
+the convention. A managed, deduplicated PATH block was appended to
+.bashrc - safe to re-run, it will not duplicate on a second install.
+This package only sets up the folder structure; it does not install or
+manage anything inside it.
+
+ES: se crearon ~/.local/{bin,lib,tmp,share}, con un README corto
+explicando la convencion. Se agrego un bloque administrado de PATH
+deduplicado a .bashrc - seguro de correr de nuevo, no se duplica en una
+segunda instalacion.
+Este paquete solo prepara la estructura de carpetas; no instala ni
+administra nada de lo que haya adentro.
+MSG

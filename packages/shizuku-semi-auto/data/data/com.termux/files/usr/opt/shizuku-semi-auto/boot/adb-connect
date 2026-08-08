@@ -1,0 +1,32 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Termux:Boot launcher for adb-connect.
+# EN: Runs as an independent scheduled job (Termux:Boot uses JobScheduler
+# per script, not a chain), so ordering relative to other boot scripts
+# does not matter for correctness.
+# ES: Corre como job independiente (Termux:Boot programa cada script por
+# separado vía JobScheduler, no en cadena), por lo que el orden relativo
+# a otros scripts de arranque no afecta su funcionamiento.
+
+termux-wake-lock
+
+HOME=/data/data/com.termux/files/home
+LOG="$HOME/.local/tmp/boot-adb-connect.log"
+mkdir -p "$HOME/.local/tmp"
+: > "$LOG"  # 1 log por ejecución
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Boot launcher (adb-connect) iniciado — wake-lock activo" >> "$LOG"
+echo "PATH actual: $PATH" >> "$LOG"
+echo "Verificando binario: $(ls -la $HOME/.local/bin/adb-connect 2>&1)" >> "$LOG"
+
+# EN: nohup + & + disown (not "exec") so this launcher script exits
+# quickly instead of becoming the long-running process itself. Daemon
+# stdout goes to /dev/null, not this log — it already writes its own
+# history to adb-connect.log; sending it here too just duplicated lines.
+# ES: nohup + & + disown (no "exec") para que este launcher termine
+# rápido en vez de quedar como el proceso de larga duración él mismo.
+# El stdout del daemon va a /dev/null, no a este log — ya escribe su
+# propio historial en adb-connect.log; mandarlo acá también duplicaba
+# cada línea.
+nohup "$HOME/.local/bin/adb-connect" > /dev/null 2>&1 &
+disown
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] adb-connect lanzado en background, PID $!" >> "$LOG"

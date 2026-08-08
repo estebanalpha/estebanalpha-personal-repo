@@ -1,0 +1,62 @@
+#!/data/data/com.termux/files/usr/bin/bash
+: "${PREFIX:=/data/data/com.termux/files/usr}"
+: "${RISH_APPLICATION_ID:=com.termux}"
+export RISH_APPLICATION_ID
+
+# Ya estamos dentro de un intérprete de Termux, así que ahora sí
+# podemos quitar LD_PRELOAD antes de lanzar procesos del sistema.
+unset LD_PRELOAD 2>/dev/null || true
+
+LOADER=""
+
+if [[ -n "${RISH_LOADER:-}" && -f "${RISH_LOADER:-}" ]]; then
+    LOADER="${RISH_LOADER}"
+else
+    for dir in \
+        "$PREFIX/lib/rish" \
+        "$PREFIX/lib/rish-shizuku" \
+        "$PREFIX/lib" \
+        "$PREFIX/share/rish"
+    do
+        [[ -d "$dir" ]] || continue
+
+        for name in rish_shizuku.dex rish_shizuku.so; do
+            if [[ -f "$dir/$name" ]]; then
+                LOADER="$dir/$name"
+                break 2
+            fi
+        done
+    done
+fi
+
+if [[ -z "$LOADER" ]]; then
+    echo "[rish] No se encontró rish_shizuku.dex/.so" >&2
+    echo "[rish] Buscado en: \$PREFIX/lib/rish, \$PREFIX/lib, \$PREFIX/share/rish" >&2
+    exit 1
+fi
+
+if [[ -n "${RISH_DEBUG:-}" ]]; then
+    echo "[rish] loader: $LOADER" >&2
+fi
+
+SDK=$(/system/bin/getprop ro.build.version.sdk 2>/dev/null)
+[[ "$SDK" =~ ^[0-9]+$ ]] || SDK=0
+
+if (( SDK >= 34 )); then
+    if [[ -w "$LOADER" ]]; then
+        chmod 400 "$LOADER" 2>/dev/null || /system/bin/chmod 400 "$LOADER" 2>/dev/null || true
+    fi
+
+    if [[ -w "$LOADER" ]]; then
+        echo "[rish] Android 14+ requiere loader de solo lectura: $LOADER" >&2
+        exit 1
+    fi
+fi
+
+if (( $# > 0 )) && [[ "${1#-}" == "$1" ]]; then
+    set -- -c "$*"
+fi
+
+exec /system/bin/app_process \
+    -Djava.class.path="$LOADER" /system/bin \
+    --nice-name=rish rikka.shizuku.shell.ShizukuShellLoader "$@"

@@ -1,0 +1,111 @@
+#!/data/data/com.termux/files/usr/bin/bash
+#
+# adb-connect / EN: Persistent daemon that maintains a loopback ADB-over-
+# WiFi connection to this device and works around a USB-mode-transition
+# freeze on some devices/ROMs (pre-Android-11, no native wireless-debug
+# toggle). Detects when "adb tcpip 5555" is run from a second device and
+# connects to itself over 127.0.0.1, then applies a USB-mode "priming"
+# step before the initiating cable is disconnected.
+#
+# adb-connect / ES: Daemon persistente que mantiene una conexión ADB por
+# WiFi (loopback) hacia este mismo equipo, y evita un freeze de transición
+# de modo USB presente en algunos dispositivos/ROMs (Android pre-11, sin
+# toggle nativo de depuración inalámbrica). Detecta cuándo se corre
+# "adb tcpip 5555" desde otro equipo, se conecta a sí mismo por
+# 127.0.0.1, y aplica un "priming" de modo USB antes de que se
+# desconecte el cable que inició la sesión.
+#
+# Design notes / Notas de diseño:
+#   - Sondea localhost:5555 con un socket TCP crudo (bash /dev/tcp) antes
+#     de invocar adb, para reaccionar en el mismo segundo en que se
+#     activa el modo TCP en el otro equipo, sin reiniciar el servidor de
+#     adb en cada chequeo.
+#   - Todo comando adb tiene timeout: si el freeze ocurre a mitad de una
+#     verificación, el daemon nunca queda colgado — siempre vuelve a
+#     intentar en el siguiente ciclo.
+#   - El priming fuerza dos transiciones de modo USB (none -> mtp) en vez
+#     de fijar un único valor: un modo que ya estaba activo no dispara el
+#     cambio de estado necesario para evitar el freeze; forzar un estado
+#     intermedio garantiza la transición sin depender del estado previo.
+#   - La verificación de "conexión viva" ejecuta un shell real (con
+#     timeout), no solo "get-state" — get-state puede seguir reportando
+#     "device" con el shell ya congelado.
+
+ADB=/data/data/com.termux/files/usr/bin/adb
+STATE_FILE=/data/data/com.termux/files/home/.local/tmp/adb-serial.txt
+LOG=/data/data/com.termux/files/home/.local/tmp/adb-connect.log
+SERIAL="127.0.0.1:5555"
+
+FAST_POLL=1            # puerto todavía cerrado: cada cuánto revisa (barato, sin tocar adb)
+KEEPALIVE_INTERVAL=45  # ya conectado y sano: cada cuánto solo confirma
+RETRY_BACKOFF=10       # puerto abierto pero connect/priming falló: cuánto espera antes de reintentar
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"; }
+
+port_open() {
+    timeout 1 bash -c "echo > /dev/tcp/127.0.0.1/5555" 2>/dev/null
+}
+
+is_alive() {
+    [ "$(timeout 5 "$ADB" -s "$SERIAL" shell echo ping 2>/dev/null)" = "ping" ]
+}
+
+try_connect() {
+    log "--- puerto abierto: conectando YA, antes de que desconecten el cable ---"
+    timeout 5 "$ADB" kill-server 2>&1 | while read -r l; do log "adb kill: $l"; done
+    sleep 1
+    CONNECT_OUT=$(timeout 8 "$ADB" connect "$SERIAL" 2>&1)
+    log "Resultado connect ($SERIAL): $CONNECT_OUT"
+
+    TEST1=$(timeout 5 "$ADB" -s "$SERIAL" shell echo hola 2>&1)
+    log "Test pre-priming: $TEST1"
+    if [ "$TEST1" != "hola" ]; then
+        log "Sin respuesta (o freeze) en el primer intento."
+        return 1
+    fi
+
+    log "Priming: forzando transición real de modo USB (none -> mtp)..."
+    timeout 5 "$ADB" -s "$SERIAL" shell "svc usb setFunctions none" 2>&1 | while read -r l; do log "prime1: $l"; done
+    sleep 1
+    timeout 5 "$ADB" -s "$SERIAL" shell "svc usb setFunctions mtp" 2>&1 | while read -r l; do log "prime2: $l"; done
+    sleep 2
+
+    TEST2=$(timeout 5 "$ADB" -s "$SERIAL" shell echo hola 2>&1)
+    log "Test post-priming: $TEST2"
+    if [ "$TEST2" = "hola" ]; then
+        echo "$SERIAL" > "$STATE_FILE"
+        log "ÉXITO. Serial guardado: $SERIAL"
+        return 0
+    fi
+
+    log "ERROR: priming no funcionó en este intento (¿se desconectó el cable antes de tiempo?)."
+    return 1
+}
+
+: > "$LOG"  # 1 log por ejecución: se trunca al arrancar, no se acumula entre boots
+log "=== adb-connect daemon started — PID $$ ==="
+
+CONNECTED=0
+while true; do
+    if is_alive; then
+        CONNECTED=1
+        sleep "$KEEPALIVE_INTERVAL"
+        continue
+    fi
+
+    if [ "$CONNECTED" -eq 1 ]; then
+        log "Se perdió la respuesta en $SERIAL (freeze o desconexión) — reintentando."
+        CONNECTED=0
+    fi
+
+    if port_open; then
+        if try_connect; then
+            CONNECTED=1
+            sleep "$KEEPALIVE_INTERVAL"
+        else
+            sleep "$RETRY_BACKOFF"
+        fi
+    else
+        sleep "$FAST_POLL"
+    fi
+done

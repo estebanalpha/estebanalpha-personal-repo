@@ -1,0 +1,46 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -e
+
+P="/data/data/com.termux/files/usr"
+
+chmod 755 "$P/bin/rish" 2>/dev/null || true
+chmod 400 "$P/lib/rish/rish_shizuku.dex" 2>/dev/null || true
+
+if [ -e "$P/lib/rish/rish_shizuku.so" ]; then
+    chmod 400 "$P/lib/rish/rish_shizuku.so" 2>/dev/null || true
+fi
+
+cat <<'MSG'
+== rish-shizuku installed / instalado ==
+EN - Installed:
+  $PREFIX/bin/rish
+  $PREFIX/lib/rish/rish_shizuku.dex
+  $PREFIX/lib/rish/rish_shizuku.so (compatibility symlink, if present)
+
+Usage:
+  rish
+  rish id
+  rish -c 'command'
+
+The wrapper clears LD_PRELOAD before starting app_process.
+Shizuku must be active on the device.
+
+If `command -v rish` does not point to $PREFIX/bin/rish, another copy
+earlier in PATH is taking precedence.
+
+ES - Instalado:
+  $PREFIX/bin/rish
+  $PREFIX/lib/rish/rish_shizuku.dex
+  $PREFIX/lib/rish/rish_shizuku.so (symlink de compatibilidad, si existe)
+
+Uso:
+  rish
+  rish id
+  rish -c 'comando'
+
+El wrapper limpia LD_PRELOAD antes de iniciar app_process.
+Shizuku debe estar activo en el dispositivo.
+
+Si `command -v rish` no apunta a $PREFIX/bin/rish, otra copia ubicada
+antes en PATH está teniendo prioridad.
+MSG

@@ -1,0 +1,64 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -e
+
+SRC="/data/data/com.termux/files/usr/opt/shizuku-semi-auto"
+DEST_HOME="/data/data/com.termux/files/home"
+
+mkdir -p "$DEST_HOME/.local/bin" "$DEST_HOME/.local/tmp" "$DEST_HOME/.termux/boot"
+
+cp "$SRC/bin/adb-connect"       "$DEST_HOME/.local/bin/adb-connect"
+cp "$SRC/bin/shizuku-watchdog"  "$DEST_HOME/.local/bin/shizuku-watchdog"
+cp "$SRC/boot/adb-connect"      "$DEST_HOME/.termux/boot/adb-connect"
+cp "$SRC/boot/shizuku-watchdog" "$DEST_HOME/.termux/boot/shizuku-watchdog"
+
+chmod +x "$DEST_HOME/.local/bin/adb-connect" "$DEST_HOME/.local/bin/shizuku-watchdog" \
+         "$DEST_HOME/.termux/boot/adb-connect" "$DEST_HOME/.termux/boot/shizuku-watchdog"
+
+cat <<'MSG'
+
+== shizuku-semi-auto installed / instalado ==
+
+EN - Before rebooting, confirm manually:
+1) Termux:Boot installed and OPENED at least once. IMPORTANT: it must
+   come from the SAME source as your main Termux app (GitHub or
+   F-Droid, not mixed) - Android refuses to run apps that share
+   Termux's signature scope if they are signed with different keys.
+   Check your current app's source with: echo $TERMUX_APK_RELEASE
+2) Shizuku app installed; open its "ADB" tab once so it generates
+   start.sh at
+   /storage/emulated/0/Android/data/moe.shizuku.privileged.api/
+3) Optional: pkg install -y termux-api + the Termux:API app (same
+   source as above), for the notification when the watchdog
+   reactivates Shizuku.
+4) Optional: add $HOME/.local/bin to PATH in your .bashrc.
+
+IMPORTANT: the USB-mode "priming" in adb-connect was diagnosed on a
+specific device/ROM. Verify it on this device before assuming it
+applies the same way here (see the repo README).
+
+Reboot, then test with 'adb tcpip 5555' from another device, cable
+connected.
+
+---
+
+ES - Antes de reiniciar, confirma a mano:
+1) Termux:Boot instalada y ABIERTA al menos una vez. IMPORTANTE: tiene
+   que venir de la MISMA fuente que tu Termux principal (GitHub o
+   F-Droid, no mezclado) - Android rechaza correr apps que comparten
+   el alcance de firma de Termux si estan firmadas con claves
+   distintas. Confirma la fuente de tu app actual con:
+   echo $TERMUX_APK_RELEASE
+2) App Shizuku instalada; entra una vez a su pestana "ADB" para que
+   genere start.sh en
+   /storage/emulated/0/Android/data/moe.shizuku.privileged.api/
+3) Opcional: pkg install -y termux-api + la app Termux:API (misma
+   fuente que arriba), para la notificacion cuando el watchdog
+   reactiva Shizuku.
+4) Opcional: agrega $HOME/.local/bin al PATH en tu .bashrc.
+
+IMPORTANTE: el priming de modo USB en adb-connect se diagnostico en un
+dispositivo/ROM concreto. Verificalo en este equipo antes de asumir que
+aplica igual (ver el README del repo).
+
+Reinicia y proba con 'adb tcpip 5555' desde otro equipo, cable puesto.
+MSG

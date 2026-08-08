@@ -1,0 +1,11 @@
+#!/data/data/com.termux/files/usr/bin/bash
+
+DEST_HOME="/data/data/com.termux/files/home"
+
+pkill -f "$DEST_HOME/.local/bin/adb-connect" 2>/dev/null || true
+pkill -f "$DEST_HOME/.local/bin/shizuku-watchdog" 2>/dev/null || true
+
+rm -f "$DEST_HOME/.local/bin/adb-connect" "$DEST_HOME/.local/bin/shizuku-watchdog"
+rm -f "$DEST_HOME/.termux/boot/adb-connect" "$DEST_HOME/.termux/boot/shizuku-watchdog"
+
+exit 0
