@@ -16,7 +16,9 @@ BUILD_DIR="$REPO_DIR/.build"
 
 mkdir -p "$OUT_DIR" "$BUILD_DIR"
 
-export SOURCE_DATE_EPOCH="$(git -C "$REPO_DIR" log -1 --format=%ct 2>/dev/null || date +%s)"
+# Fallback repo-wide, usado solo si un paquete no tiene historial de git
+# todavia (ej. se acaba de agregar y no se commiteo).
+REPO_EPOCH="$(git -C "$REPO_DIR" log -1 --format=%ct 2>/dev/null || date +%s)"
 
 for pkgdir in "$PKG_SRC_DIR"/*/; do
     name="$(basename "$pkgdir")"
@@ -46,8 +48,14 @@ for pkgdir in "$PKG_SRC_DIR"/*/; do
         cp -a "$pkgdir/data" "$stage/"
     fi
 
+    # Epoch propio de ESTE paquete (ultimo commit que toco packages/$name),
+    # no el del repo entero -- asi un commit que solo toca otro paquete no
+    # hace que este .deb salga distinto sin que su contenido haya cambiado.
+    PKG_EPOCH="$(git -C "$REPO_DIR" log -1 --format=%ct -- "packages/$name" 2>/dev/null)"
+    [ -n "$PKG_EPOCH" ] || PKG_EPOCH="$REPO_EPOCH"
+
     rm -f "$OUT_DIR/${name}_"*_*.deb
-    dpkg-deb --build --root-owner-group "$stage" "$OUT_DIR/"
+    SOURCE_DATE_EPOCH="$PKG_EPOCH" dpkg-deb --build --root-owner-group "$stage" "$OUT_DIR/"
 done
 
 rm -rf "$BUILD_DIR"

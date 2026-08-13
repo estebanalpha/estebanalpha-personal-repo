@@ -258,11 +258,15 @@ you touch `build.sh`, don't reintroduce these:
   building. Permissions can drift to `700` after a `tar`/`cp`
   round-trip (observed after extracting a tarball on Termux); `dpkg-deb`
   refuses to build otherwise.
-- **`SOURCE_DATE_EPOCH`** is fixed to the current git commit's
-  timestamp before calling `dpkg-deb`, so rebuilding unchanged source
-  produces a byte-identical `.deb`. Without this, every `./build.sh`
-  run re-embeds "now" via gzip, and touching one package makes *every*
-  package show as modified in `git status`.
+- **`SOURCE_DATE_EPOCH` is derived per package**, from the latest
+  commit that touched `packages/<name>/` specifically — not from the
+  repo's overall HEAD. `dpkg-deb` embeds a build timestamp via gzip; if
+  the epoch came from the repo-wide HEAD instead, every unrelated
+  commit would change *every* package's `.deb` bytes even when its
+  source didn't change, since HEAD moves with every commit regardless
+  of which package it touched. Falls back to the repo-wide HEAD
+  timestamp only for a package with no commit history yet (just
+  added, not committed).
 - Old `.deb` files for a package are deleted before rebuilding it, so a
   version bump doesn't leave a stale file in `docs/` next to the new
   one.
@@ -666,11 +670,15 @@ Otros requisitos ya vigentes — verificá que sigan ahí si tocás
   de construir. Los permisos pueden terminar en `700` tras un viaje de
   ida y vuelta por `tar`/`cp` (se observó al extraer un tarball en
   Termux); `dpkg-deb` se niega a construir si no.
-- **`SOURCE_DATE_EPOCH`** se fija al timestamp del commit actual de
-  git antes de llamar a `dpkg-deb`, para que reconstruir contenido sin
-  cambios produzca un `.deb` idéntico byte a byte. Sin esto, cada
-  corrida de `./build.sh` reincrusta "ahora" vía gzip, y tocar un solo
-  paquete hace que *todos* aparezcan como modificados en `git status`.
+- **`SOURCE_DATE_EPOCH` se deriva por paquete**, del último commit que
+  tocó `packages/<nombre>/` puntualmente — no del HEAD general del
+  repo. `dpkg-deb` incrusta un timestamp de build vía gzip; si el
+  epoch saliera del HEAD de todo el repo, cualquier commit no
+  relacionado cambiaría los bytes del `.deb` de *todos* los paquetes
+  aunque su fuente no haya cambiado, porque el HEAD se mueve con cada
+  commit sin importar qué paquete tocó. Cae al timestamp del HEAD
+  general del repo solo para un paquete sin historial de git todavía
+  (recién agregado, sin commitear).
 - Los `.deb` viejos de un paquete se borran antes de reconstruirlo,
   para que un bump de versión no deje un archivo viejo en `docs/`
   junto al nuevo.

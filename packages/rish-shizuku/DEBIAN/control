@@ -1,5 +1,5 @@
 Package: rish-shizuku
-Version: 1.0.3
+Version: 1.0.4
 Architecture: all
 Depends: bash
 Maintainer: estebanalpha

@@ -3,9 +3,19 @@
 : "${RISH_APPLICATION_ID:=com.termux}"
 export RISH_APPLICATION_ID
 
-# Ya estamos dentro de un intérprete de Termux, así que ahora sí
-# podemos quitar LD_PRELOAD antes de lanzar procesos del sistema.
+# Already inside a Termux interpreter, so it's now safe to clear
+# LD_PRELOAD before launching system processes.
 unset LD_PRELOAD 2>/dev/null || true
+
+LANG_CONF="$PREFIX/etc/estebanalpha-repo/lang.conf"
+if [ -f "$LANG_CONF" ]; then
+    _LANG="$(cat "$LANG_CONF")"
+else
+    case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in
+        es*) _LANG=es ;;
+        *)   _LANG=en ;;
+    esac
+fi
 
 LOADER=""
 
@@ -19,7 +29,6 @@ else
         "$PREFIX/share/rish"
     do
         [[ -d "$dir" ]] || continue
-
         for name in rish_shizuku.dex rish_shizuku.so; do
             if [[ -f "$dir/$name" ]]; then
                 LOADER="$dir/$name"
@@ -30,8 +39,13 @@ else
 fi
 
 if [[ -z "$LOADER" ]]; then
-    echo "[rish] No se encontró rish_shizuku.dex/.so" >&2
-    echo "[rish] Buscado en: \$PREFIX/lib/rish, \$PREFIX/lib, \$PREFIX/share/rish" >&2
+    if [[ "$_LANG" = es ]]; then
+        echo "[rish] No se encontró rish_shizuku.dex/.so" >&2
+        echo "[rish] Buscado en: \$PREFIX/lib/rish, \$PREFIX/lib, \$PREFIX/share/rish" >&2
+    else
+        echo "[rish] rish_shizuku.dex/.so not found" >&2
+        echo "[rish] Searched: \$PREFIX/lib/rish, \$PREFIX/lib, \$PREFIX/share/rish" >&2
+    fi
     exit 1
 fi
 
@@ -46,9 +60,12 @@ if (( SDK >= 34 )); then
     if [[ -w "$LOADER" ]]; then
         chmod 400 "$LOADER" 2>/dev/null || /system/bin/chmod 400 "$LOADER" 2>/dev/null || true
     fi
-
     if [[ -w "$LOADER" ]]; then
-        echo "[rish] Android 14+ requiere loader de solo lectura: $LOADER" >&2
+        if [[ "$_LANG" = es ]]; then
+            echo "[rish] Android 14+ requiere loader de solo lectura: $LOADER" >&2
+        else
+            echo "[rish] Android 14+ requires a read-only loader: $LOADER" >&2
+        fi
         exit 1
     fi
 fi
