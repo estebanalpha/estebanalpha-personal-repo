@@ -98,6 +98,18 @@ cat ~/.local/tmp/shizuku-method.txt   # start method in use
 - Logs are truncated on every run on purpose — one log per cycle, not
   an accumulated history.
 
+### Troubleshooting
+
+- **`adb` fails with `CANNOT LINK EXECUTABLE ... cannot locate symbol
+  "_ZNSt6__ndk113__hash_memoryEPKvm"`**: your `libc++` is older than the
+  installed `android-tools` build (stale/partial Termux upgrade, or
+  mixing F-Droid and GitHub builds). Fix:
+  `pkg update && pkg upgrade -y`, then `pkg reinstall android-tools`.
+  The postinst prints this same hint when it detects the broken state.
+- **Android 11+: `shizuku-pair` can't connect**: the port rotates; make
+  sure you typed the one from the MAIN wireless-debugging screen (not
+  the pairing dialog), and that the screen stayed open while typing.
+
 ### Uninstall
 
 ```bash
@@ -201,6 +213,19 @@ cat ~/.local/tmp/shizuku-method.txt   # método de arranque en uso
   interrumpirla. Caso borde infrecuente, solo Android 10-.
 - Los logs se truncan en cada corrida a propósito — 1 log por ciclo, no
   un historial acumulado.
+
+### Solución de problemas
+
+- **`adb` falla con `CANNOT LINK EXECUTABLE ... cannot locate symbol
+  "_ZNSt6__ndk113__hash_memoryEPKvm"`**: tu `libc++` es más vieja que el
+  build de `android-tools` instalado (Termux desactualizado a medias, o
+  mezcla de builds de F-Droid y GitHub). Arreglo:
+  `pkg update && pkg upgrade -y` y después `pkg reinstall android-tools`.
+  El postinst imprime esta misma ayuda si detecta el estado roto.
+- **Android 11+: `shizuku-pair` no conecta**: el puerto rota; asegurate
+  de tipear el de la pantalla PRINCIPAL de depuración inalámbrica (no el
+  del diálogo de emparejamiento), y de que la pantalla siga abierta
+  mientras tipeás.
 
 ### Desinstalar
 

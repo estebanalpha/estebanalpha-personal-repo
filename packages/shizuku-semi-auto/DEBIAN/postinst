@@ -1,37 +1,48 @@
 #!/data/data/com.termux/files/usr/bin/bash
 set -e
 
+# EN: Normal commands (adb-connect, shizuku-watchdog, shizuku-pair) are
+# installed by dpkg into $PREFIX/bin straight from the package payload —
+# NOTHING user-facing goes to ~/.local/bin. Only the Termux:Boot
+# launchers must live in $HOME, so just those two are staged via
+# $PREFIX/opt + this postinst (the only legitimate $HOME exception).
+# ES: Los comandos normales los instala dpkg en $PREFIX/bin directo
+# desde el payload — NADA va a ~/.local/bin. Solo los launchers de
+# Termux:Boot deben vivir en $HOME, así que solo esos dos se preparan
+# via $PREFIX/opt + este postinst (la unica excepcion legitima de $HOME).
+
 SRC="/data/data/com.termux/files/usr/opt/shizuku-semi-auto"
 DEST_HOME="/data/data/com.termux/files/home"
 
-mkdir -p "$DEST_HOME/.local/bin" "$DEST_HOME/.local/tmp" "$DEST_HOME/.termux/boot"
+mkdir -p "$DEST_HOME/.local/tmp" "$DEST_HOME/.termux/boot"
 
-cp "$SRC/bin/adb-connect"       "$DEST_HOME/.local/bin/adb-connect"
-cp "$SRC/bin/shizuku-watchdog"  "$DEST_HOME/.local/bin/shizuku-watchdog"
-cp "$SRC/bin/shizuku-pair"      "$DEST_HOME/.local/bin/shizuku-pair"
 cp "$SRC/boot/adb-connect"      "$DEST_HOME/.termux/boot/adb-connect"
 cp "$SRC/boot/shizuku-watchdog" "$DEST_HOME/.termux/boot/shizuku-watchdog"
 
-chmod +x "$DEST_HOME/.local/bin/adb-connect" "$DEST_HOME/.local/bin/shizuku-watchdog" \
-         "$DEST_HOME/.local/bin/shizuku-pair" \
-         "$DEST_HOME/.termux/boot/adb-connect" "$DEST_HOME/.termux/boot/shizuku-watchdog"
+chmod +x "$DEST_HOME/.termux/boot/adb-connect" "$DEST_HOME/.termux/boot/shizuku-watchdog"
+
+# --- health check: adb tiene que funcionar antes de que nada tenga sentido ---
+ADB_BIN="/data/data/com.termux/files/usr/bin/adb"
+ADB_OK=1
+if ! "$ADB_BIN" version >/dev/null 2>&1; then
+    ADB_OK=0
+fi
 
 cat <<'MSG'
 
 == shizuku-semi-auto installed / instalado ==
 
-EN - Before rebooting, confirm manually:
+EN - Commands are in $PREFIX/bin (already in PATH). Before rebooting:
 1) Termux:Boot installed and OPENED at least once. IMPORTANT: it must
    come from the SAME source as your main Termux app (GitHub or
    F-Droid, not mixed) - Android refuses to run apps that share
    Termux's signature scope if they are signed with different keys.
    Check your current app's source with: echo $TERMUX_APK_RELEASE
-2) Shizuku app installed; open its "ADB" tab once so it generates
-   start.sh (on 13.6+ the watchdog uses libshizuku.so instead).
+2) Shizuku app installed. On versions before 13.6: open its "ADB" tab
+   once so it generates start.sh (13.6+ uses libshizuku.so instead).
 3) Optional: pkg install -y termux-api + the Termux:API app (same
    source as above), for the notification when the watchdog
    reactivates Shizuku.
-4) Optional: add $HOME/.local/bin to PATH in your .bashrc.
 
 FLOWS / FLUJOS:
 - Android 10 and below / y anteriores: after reboot, connect a cable
@@ -43,3 +54,18 @@ FLOWS / FLUJOS:
 
 Reboot, then test. Logs: ~/.local/tmp/*.log
 MSG
+
+if [ "$ADB_OK" -ne 1 ]; then
+    cat <<'WARN'
+!! PROBLEM / PROBLEMA: 'adb' is installed but does not run
+   ('CANNOT LINK EXECUTABLE ... cannot locate symbol ...' = your libc++
+   is older than the android-tools build).
+
+   FIX / ARREGLO:
+     pkg update && pkg upgrade -y
+     pkg reinstall android-tools
+
+   If it persists, your Termux install may mix F-Droid and GitHub
+   builds - reinstall all Termux apps from ONE source.
+WARN
+fi
