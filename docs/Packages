@@ -9,10 +9,10 @@ Description: Personal .local folder scaffolding for new Termux devices
  convention, and appends a deduplicated PATH block to .bashrc. Does not
  install or manage tools inside .local, see the repo README.
 Filename: ./local-setup_0.2_all.deb
-Size: 1944
-MD5sum: 6621d9a545f719878de7876dac34e4b8
-SHA1: 29fe51cf475341b9b8b3aeb926210dba7dbe55a7
-SHA256: a4ba69f49bd426df716e9ec30f467c103dec17f58dff4f7576807410e8a51534
+Size: 1646
+MD5sum: e8a1219df4cf7e02391c31a4117ddbb7
+SHA1: 9e6a721872b601139dec24a6d324cdfe3c30c0c0
+SHA256: 31e010e58113fad3ccfb07d8e03ae00697f5de022d2b5aafe5dbda9eb52d46cf
 
 Package: rish-shizuku
 Version: 1.0.4
@@ -25,10 +25,10 @@ Description: Shizuku rish wrapper for Termux
  Installs rish in Termux bin and the Shizuku loader in lib/rish.
  Clears LD_PRELOAD before launching app_process.
 Filename: ./rish-shizuku_1.0.4_all.deb
-Size: 5388
-MD5sum: 79aac401d41eb48d53a354b4fd02a9b4
-SHA1: 40ee178416698786f18b40f51a7ca9e68b718c02
-SHA256: 867ea067296074038df8ed035958aa0a8b7392dc4761212384266cab1109fa0a
+Size: 5624
+MD5sum: 097d29f2d3ed54a15a2f8bcf4fc8f3b0
+SHA1: 7c1fda5d28b094222358800c21cb9031a57fdd94
+SHA256: e0afd5333cefec885796e72befb8e331a97ef017c7d0d6edf6b6e2c074df5498
 
 Package: shizuku-semi-auto
 Version: 1.1.1
@@ -42,8 +42,8 @@ Description: Semi-automatic Shizuku activation via ADB loopback (Termux:Boot)
  put into "adb tcpip" mode from a second Android device and re-activates
  Shizuku automatically, without a cable connected long-term.
 Filename: ./shizuku-semi-auto_1.1.1_all.deb
-Size: 5796
-MD5sum: 932870fcc1087b18c181b6c3d83e6081
-SHA1: fd04ce6f9876ae501ad72bf683debd3a3426a74a
-SHA256: 4cfaa02da07ef4612b197862c21ab4ac41fb68ca0a012569c5499221d00871c2
+Size: 7604
+MD5sum: 9909d0e6d5efadb3111689e13e5df714
+SHA1: 8cfb1aa2b9c94cc97efc90b3f37b616521a28306
+SHA256: 4eb4c71d9190a1001bd010493f442893f8b2e040afc76a25f74e9a5dbeef9824
 
