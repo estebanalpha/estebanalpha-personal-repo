@@ -8,4 +8,10 @@ pkill -f "$DEST_HOME/.local/bin/shizuku-watchdog" 2>/dev/null || true
 rm -f "$DEST_HOME/.local/bin/adb-connect" "$DEST_HOME/.local/bin/shizuku-watchdog"
 rm -f "$DEST_HOME/.termux/boot/adb-connect" "$DEST_HOME/.termux/boot/shizuku-watchdog"
 
+# Estado volátil del paquete (serial loopback + método de arranque de
+# Shizuku cacheado). Se regenera solo en el próximo ciclo; no se deja
+# residual tras la desinstalación. Los logs de ~/.local/tmp se conservan
+# a propósito por si hace falta depurar algo después de desinstalar.
+rm -f "$DEST_HOME/.local/tmp/adb-serial.txt" "$DEST_HOME/.local/tmp/shizuku-method.txt"
+
 exit 0

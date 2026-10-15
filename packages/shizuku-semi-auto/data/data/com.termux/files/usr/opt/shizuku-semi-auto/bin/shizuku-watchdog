@@ -1,10 +1,43 @@
 #!/data/data/com.termux/files/usr/bin/bash
+#
+# shizuku-watchdog / EN: Restarts Shizuku via the loopback ADB connection
+# whenever its server process disappears. The exact start command depends
+# on the installed Shizuku version, so this script probes and falls back
+# instead of hardcoding one path:
+#   - Shizuku >= 13.6.0 : direct exec of libshizuku.so. Its path contains
+#     random per-install suffixes (~~...==), so it is resolved at runtime
+#     with a glob.
+#   - Shizuku V4+ (Android 7+) : sh /data/user_de/0/<pkg>/start.sh
+#   - Shizuku V4+ (Android 6)  : sh /data/user/0/<pkg>/start.sh
+#   - Shizuku V3.x             : sh /sdcard|/storage/emulated/0/.../start.sh
+# The method that works is cached in shizuku-method.txt; the cache is
+# invalidated automatically if it ever stops working (e.g. after a
+# Shizuku update changed the layout). Success is verified by checking the
+# shizuku_server process, not by parsing start.sh output.
+#
+# shizuku-watchdog / ES: Reinicia Shizuku via la conexión ADB loopback
+# cada vez que su proceso servidor desaparece. El comando exacto de
+# arranque depende de la versión instalada de Shizuku, así que este
+# script detecta y prueba alternativas en vez de hardcodear una ruta:
+#   - Shizuku >= 13.6.0 : ejecución directa de libshizuku.so. Su ruta
+#     tiene sufijos aleatorios por instalación (~~...==), así que se
+#     resuelve en runtime con un glob.
+#   - Shizuku V4+ (Android 7+) : sh /data/user_de/0/<pkg>/start.sh
+#   - Shizuku V4+ (Android 6)  : sh /data/user/0/<pkg>/start.sh
+#   - Shizuku V3.x             : sh /sdcard|/storage/emulated/0/.../start.sh
+# El método que funciona se cachea en shizuku-method.txt; el caché se
+# invalida solo si deja de funcionar (ej. tras una actualización de
+# Shizuku que cambie el layout). El éxito se verifica mirando el proceso
+# shizuku_server, no parseando el output de start.sh.
+
 ADB=/data/data/com.termux/files/usr/bin/adb
 STATE_FILE=/data/data/com.termux/files/home/.local/tmp/adb-serial.txt
+METHOD_FILE=/data/data/com.termux/files/home/.local/tmp/shizuku-method.txt
 LOG=/data/data/com.termux/files/home/.local/tmp/shizuku-watchdog.log
-SHIZUKU_SCRIPT="/storage/emulated/0/Android/data/moe.shizuku.privileged.api/start.sh"
+SHIZUKU_PKG="moe.shizuku.privileged.api"
 INTERVAL=10
 SETUP_WAIT=180
+START_TIMEOUT=20
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
 
@@ -23,17 +56,123 @@ shizuku_running() {
     timeout 8 $ADB -s "$serial" shell "ps -A 2>/dev/null" 2>/dev/null | grep -q "shizuku_server"
 }
 
-start_shizuku() {
+# --- detección de versión de Shizuku instalada ---
+detect_version() {
     local serial="$1"
+    timeout 8 $ADB -s "$serial" shell dumpsys package "$SHIZUKU_PKG" 2>/dev/null \
+        | grep -m1 versionName | head -n1 | cut -d= -f2 | tr -d '[:space:]'
+}
+
+# version_ge A B -> true si A >= B (comparación por componentes numéricos)
+version_ge() {
+    [ "$(printf '%s\n%s\n' "$2" "$1" | sort -t. -k1,1n -k2,2n -k3,3n | head -n1)" = "$2" ]
+}
+
+# 13.6.0+: la ruta de libshizuku.so tiene sufijos aleatorios -> glob
+resolve_lib() {
+    local serial="$1"
+    timeout 8 $ADB -s "$serial" shell \
+        'ls /data/app/~~*/moe.shizuku.privileged.api-*/lib/*/libshizuku.so 2>/dev/null' \
+        2>/dev/null | head -n1
+}
+
+# Ejecuta un método de arranque. Devuelve el exit status del comando remoto.
+run_method() {
+    local serial="$1" method="$2" lib
+    case "$method" in
+        lib)
+            lib=$(resolve_lib "$serial")
+            if [ -z "$lib" ]; then
+                log "[$method] libshizuku.so no encontrado con glob"
+                return 1
+            fi
+            timeout $START_TIMEOUT $ADB -s "$serial" shell "$lib" 2>&1
+            ;;
+        user_de)
+            timeout $START_TIMEOUT $ADB -s "$serial" shell \
+                sh "/data/user_de/0/$SHIZUKU_PKG/start.sh" 2>&1
+            ;;
+        user0)
+            timeout $START_TIMEOUT $ADB -s "$serial" shell \
+                sh "/data/user/0/$SHIZUKU_PKG/start.sh" 2>&1
+            ;;
+        sdcard)
+            timeout $START_TIMEOUT $ADB -s "$serial" shell \
+                sh "/storage/emulated/0/Android/data/$SHIZUKU_PKG/start.sh" 2>&1
+            ;;
+        sdcard-files)
+            timeout $START_TIMEOUT $ADB -s "$serial" shell \
+                sh "/sdcard/Android/data/$SHIZUKU_PKG/files/start.sh" 2>&1
+            ;;
+        *)
+            log "Método desconocido: $method"
+            return 1
+            ;;
+    esac
+}
+
+notify_ok() {
+    termux-notification --title "Shizuku" --content "Reiniciado automáticamente" 2>/dev/null
+}
+
+start_shizuku() {
+    local serial="$1" method ver lib
+
     log "Shizuku caído — reiniciando via $serial..."
-    OUT=$(timeout 15 $ADB -s "$serial" shell sh "$SHIZUKU_SCRIPT" 2>&1)
-    log "Output start.sh: $OUT"
-    if echo "$OUT" | grep -q "exit with 0"; then
-        log "Shizuku OK"
-        termux-notification --title "Shizuku" --content "Reiniciado automáticamente" 2>/dev/null
-    else
-        log "Posible error al iniciar Shizuku (ver output arriba)"
+
+    # 1) ¿tenemos un método cacheado que siga funcionando?
+    if [ -f "$METHOD_FILE" ]; then
+        method=$(cat "$METHOD_FILE")
+        log "Intentando método cacheado: $method"
+        OUT=$(run_method "$serial" "$method")
+        log "Output [$method]: $OUT"
+        sleep 2
+        if shizuku_running "$serial"; then
+            log "Shizuku OK (método cacheado: $method)"
+            notify_ok
+            return 0
+        fi
+        log "Método cacheado '$method' falló — invalidando caché y re-escaneando"
+        rm -f "$METHOD_FILE"
     fi
+
+    # 2) escaneo version-aware
+    ver=$(detect_version "$serial")
+    log "Shizuku versionName detectado: ${ver:-desconocido}"
+
+    if version_ge "${ver:-0}" "13.6.0"; then
+        lib=$(resolve_lib "$serial")
+        if [ -n "$lib" ]; then
+            log "Intentando método lib (>= 13.6.0): $lib"
+            OUT=$(run_method "$serial" lib)
+            log "Output [lib]: $OUT"
+            sleep 2
+            if shizuku_running "$serial"; then
+                echo lib > "$METHOD_FILE"
+                log "Shizuku OK (método: lib) — cacheado"
+                notify_ok
+                return 0
+            fi
+        else
+            log "WARN: version >= 13.6.0 pero libshizuku.so no apareció con glob — probando start.sh de todas formas"
+        fi
+    fi
+
+    for method in user_de user0 sdcard sdcard-files; do
+        log "Intentando método: $method"
+        OUT=$(run_method "$serial" "$method")
+        log "Output [$method]: $OUT"
+        sleep 2
+        if shizuku_running "$serial"; then
+            echo "$method" > "$METHOD_FILE"
+            log "Shizuku OK (método: $method) — cacheado"
+            notify_ok
+            return 0
+        fi
+    done
+
+    log "ERROR: ningún método logró arrancar Shizuku (¿app actualizada a layout nuevo?)"
+    return 1
 }
 
 : > "$LOG"  # 1 log por ejecución: se trunca al arrancar, no se acumula entre boots
