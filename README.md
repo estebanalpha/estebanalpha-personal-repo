@@ -28,8 +28,12 @@ pkg upgrade   # picks up updates to any package from this repo
 ### Packages
 
 - **shizuku-semi-auto** — semi-automatic Shizuku activation via ADB
-  loopback, for Android versions before 11 (no native wireless-debug
-  toggle). See [packages/shizuku-semi-auto/README.md](packages/shizuku-semi-auto/README.md).
+  loopback. Android 10-: one-shot `adb tcpip 5555` from a second device
+  per boot, with USB-mode priming. Android 11+: `shizuku-pair` helper
+  for wireless-debugging pairing (one port entry per boot; the pairing
+  code is asked only once). Version-aware Shizuku start (13.6+ lib
+  glob, V4+ user_de, V3.x sdcard). See
+  [packages/shizuku-semi-auto/README.md](packages/shizuku-semi-auto/README.md).
 
 - rish-shizuku — Termux wrapper for the Shizuku `rish` shell. Installs
 `rish` in `$PREFIX/bin` and the Shizuku loader in `$PREFIX/lib/rish`;
@@ -92,8 +96,12 @@ pkg upgrade   # trae actualizaciones de cualquier paquete de este repo
 ### Paquetes
 
 - **shizuku-semi-auto** — activación semi-automática de Shizuku vía ADB
-  loopback, para versiones de Android anteriores a la 11 (sin toggle
-  nativo de depuración inalámbrica). Ver [packages/shizuku-semi-auto/README.md](packages/shizuku-semi-auto/README.md).
+  loopback. Android 10-: `adb tcpip 5555` desde otro equipo una vez por
+  boot, con priming de modo USB. Android 11+: helper `shizuku-pair`
+  para emparejar por depuración inalámbrica (un puerto por boot; el
+  código se pide una sola vez). Arranque de Shizuku según versión
+  (glob de lib 13.6+, user_de V4+, sdcard V3.x). Ver
+  [packages/shizuku-semi-auto/README.md](packages/shizuku-semi-auto/README.md).
 
 - rish-shizuku — wrapper de Termux para la shell `rish` de Shizuku.
 Instala `rish` en `$PREFIX/bin` y el loader de Shizuku en
