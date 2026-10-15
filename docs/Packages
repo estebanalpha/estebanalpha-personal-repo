@@ -31,7 +31,7 @@ SHA1: 7c1fda5d28b094222358800c21cb9031a57fdd94
 SHA256: e0afd5333cefec885796e72befb8e331a97ef017c7d0d6edf6b6e2c074df5498
 
 Package: shizuku-semi-auto
-Version: 1.1.1
+Version: 1.2.0
 Architecture: all
 Maintainer: estebanalpha
 Depends: android-tools
@@ -40,10 +40,12 @@ Priority: optional
 Description: Semi-automatic Shizuku activation via ADB loopback (Termux:Boot)
  Runs adb-connect and shizuku-watchdog at boot. Detects when the device is
  put into "adb tcpip" mode from a second Android device and re-activates
- Shizuku automatically, without a cable connected long-term.
-Filename: ./shizuku-semi-auto_1.1.1_all.deb
-Size: 7604
-MD5sum: 9909d0e6d5efadb3111689e13e5df714
-SHA1: 8cfb1aa2b9c94cc97efc90b3f37b616521a28306
-SHA256: 4eb4c71d9190a1001bd010493f442893f8b2e040afc76a25f74e9a5dbeef9824
+ Shizuku automatically, without a cable connected long-term. Version-aware
+ Shizuku start (13.6+ libshizuku.so glob, V4+ user_de, V3.x sdcard) and
+ USB priming gated to Android 10 and below.
+Filename: ./shizuku-semi-auto_1.2.0_all.deb
+Size: 7682
+MD5sum: 4e3800e859a0cdc8e1d0bf866d14b33f
+SHA1: 3af6c31a736e08782172341dd5565e0d16bff096
+SHA256: db63311666243b63dae9548bb96fc886eff8cd7244ad97124be85f59f7db0a9b
 
