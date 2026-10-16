@@ -135,5 +135,6 @@ Next steps:
 3. Edit README.md.
 4. Replace the placeholder command in data/.../usr/bin/$cmd.
 5. Update the main README package list in EN and ES.
-6. Run ./build.sh and test the .deb locally.
+6. Run ./build.sh (local test build in .build/out/, docs/ is not touched)
+   and test the .deb. Pushing to main makes the CI workflow publish it.
 DONE

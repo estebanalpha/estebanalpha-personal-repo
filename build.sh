@@ -1,56 +1,70 @@
 #!/usr/bin/env bash
-# Reconstruye todos los paquetes bajo packages/ y regenera el indice del
-# repo en docs/ (la carpeta que sirve GitHub Pages).
+# Rebuilds every package under packages/ and regenerates the repo index.
 #
-# Requiere: dpkg-deb, md5sum/sha1sum/sha256sum, gzip (todo esto SI esta
-# en el paquete 'dpkg' base de Termux). NO usa dpkg-scanpackages/dpkg-dev
-# a proposito -- ese paquete no existe en Termux, solo en Debian/Ubuntu.
+# Default (local test build): output goes to .build/out/ and nothing in
+# docs/ is touched. With --publish the output goes to docs/, the folder
+# GitHub Pages serves; that mode is meant for the CI workflow, which
+# commits the result. Do not commit docs/ by hand.
 #
-# Uso: ./build.sh
+# Needs: dpkg-deb, md5sum/sha1sum/sha256sum, gzip (all part of the base
+# 'dpkg'/coreutils in Termux). dpkg-scanpackages/dpkg-dev is deliberately
+# not used: it does not exist in Termux.
+#
+# Usage: ./build.sh [--publish]
 set -e
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 PKG_SRC_DIR="$REPO_DIR/packages"
-OUT_DIR="$REPO_DIR/docs"
 BUILD_DIR="$REPO_DIR/.build"
+STAGE_DIR="$BUILD_DIR/stage"
 
-mkdir -p "$OUT_DIR" "$BUILD_DIR"
+case "${1:-}" in
+    --publish) OUT_DIR="$REPO_DIR/docs"; PUBLISH=1 ;;
+    "")        OUT_DIR="$BUILD_DIR/out";  PUBLISH=0 ;;
+    *) echo "Usage: ./build.sh [--publish]" >&2; exit 2 ;;
+esac
 
-# Fallback repo-wide, usado solo si un paquete no tiene historial de git
-# todavia (ej. se acaba de agregar y no se commiteo).
+mkdir -p "$OUT_DIR" "$STAGE_DIR"
+
+# Repo-wide fallback, used only for a package with no git history yet.
 REPO_EPOCH="$(git -C "$REPO_DIR" log -1 --format=%ct 2>/dev/null || date +%s)"
 
 for pkgdir in "$PKG_SRC_DIR"/*/; do
     name="$(basename "$pkgdir")"
 
     if [ ! -f "$pkgdir/DEBIAN/control" ]; then
-        echo "Saltando $name (no tiene DEBIAN/control)"
+        echo "Skipping $name (no DEBIAN/control)"
         continue
     fi
 
-    echo "Empaquetando $name..."
+    echo "Packaging $name..."
 
-    chmod 755 "$pkgdir/DEBIAN"
-    chmod 755 "$pkgdir/DEBIAN/postinst" 2>/dev/null || true
-    chmod 755 "$pkgdir/DEBIAN/prerm" 2>/dev/null || true
-    chmod 755 "$pkgdir/DEBIAN/preinst" 2>/dev/null || true
-    chmod 755 "$pkgdir/DEBIAN/postrm" 2>/dev/null || true
-
-    stage="$BUILD_DIR/$name"
+    stage="$STAGE_DIR/$name"
     rm -rf "$stage"
     mkdir -p "$stage"
 
-    # Solo DEBIAN y data forman el paquete.
-    # README.md y otros archivos de mantenimiento quedan fuera del payload.
+    # Only DEBIAN and data form the package; README.md and other
+    # maintenance files stay out of the payload.
     cp -a "$pkgdir/DEBIAN" "$stage/"
-
     if [ -d "$pkgdir/data" ]; then
         cp -a "$pkgdir/data" "$stage/"
     fi
 
-    # Epoch propio de ESTE paquete (ultimo commit que toco packages/$name),
-    # no el del repo entero -- asi un commit que solo toca otro paquete no
-    # hace que este .deb salga distinto sin que su contenido haya cambiado.
+    # Normalize modes so the .deb bytes do not depend on the umask of the
+    # machine that builds it (Termux and CI must produce identical files):
+    # directories 755, files 644, anything already executable 755.
+    find "$stage" -type d -exec chmod 755 {} +
+    find "$stage" -type f ! -perm -u+x -exec chmod 644 {} +
+    find "$stage" -type f -perm -u+x -exec chmod 755 {} +
+    # Commands and maintainer scripts are always executable, even if the
+    # executable bit was lost on the way into git.
+    find "$stage" -type f -path '*/usr/bin/*' -exec chmod 755 {} +
+    for script in preinst postinst prerm postrm; do
+        if [ -f "$stage/DEBIAN/$script" ]; then chmod 755 "$stage/DEBIAN/$script"; fi
+    done
+
+    # Per-package epoch: last commit that touched packages/<name>, so a
+    # commit that only touches another package does not change this .deb.
     PKG_EPOCH="$(git -C "$REPO_DIR" log -1 --format=%ct -- "packages/$name" 2>/dev/null)"
     [ -n "$PKG_EPOCH" ] || PKG_EPOCH="$REPO_EPOCH"
 
@@ -58,9 +72,9 @@ for pkgdir in "$PKG_SRC_DIR"/*/; do
     SOURCE_DATE_EPOCH="$PKG_EPOCH" dpkg-deb --build --root-owner-group "$stage" "$OUT_DIR/"
 done
 
-rm -rf "$BUILD_DIR"
+rm -rf "$STAGE_DIR"
 
-echo "Generando indice del repo (Packages)..."
+echo "Generating the repo index (Packages)..."
 
 INDEX="$OUT_DIR/Packages"
 : > "$INDEX"
@@ -81,14 +95,23 @@ for deb in "$OUT_DIR"/*.deb; do
     echo "" >> "$INDEX"
 done
 
-gzip -kf "$INDEX"
+# -n: do not store the file name and timestamp in the gzip header, so an
+# unchanged index compresses to identical bytes.
+gzip -nkf "$INDEX"
 
-# GitHub Pages sirve mejor archivos sin extensión cuando Jekyll está desactivado.
-touch "$OUT_DIR/.nojekyll"
+if [ "$PUBLISH" -eq 1 ]; then
+    # GitHub Pages serves extensionless files properly with Jekyll off.
+    touch "$OUT_DIR/.nojekyll"
+fi
 
 echo ""
-echo "Listo. docs/ actualizado:"
-ls -la "$OUT_DIR"/*.deb "$OUT_DIR/Packages"* "$OUT_DIR/.nojekyll" 2>/dev/null
+echo "Done. Output in: $OUT_DIR"
+ls -la "$OUT_DIR"/*.deb "$OUT_DIR/Packages"* 2>/dev/null
 
 echo ""
-echo "Commit + push para publicar (GitHub Pages sirviendo desde docs/)."
+if [ "$PUBLISH" -eq 1 ]; then
+    echo "docs/ updated. In CI the workflow commits it; locally, do not commit docs/."
+else
+    echo "Local test build only; docs/ was not touched. Pushing changes under"
+    echo "packages/ makes the CI workflow publish them."
+fi

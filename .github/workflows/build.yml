@@ -12,25 +12,33 @@ on:
 permissions:
   contents: write
 
+# One build at a time: the job commits to main, so two overlapping runs
+# would race on the push.
+concurrency:
+  group: build-repo
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # build.sh usa git log para SOURCE_DATE_EPOCH por paquete
+          ref: main # always build from the latest main, not the triggering commit
+          fetch-depth: 0 # build.sh uses git log for the per-package SOURCE_DATE_EPOCH
 
       - name: Build packages and refresh apt index
-        run: ./build.sh
+        run: ./build.sh --publish
 
       - name: Commit updated repo index
         run: |
-          if ! git diff --quiet docs/; then
+          if ! git diff --quiet docs/ || [ -n "$(git ls-files --others --exclude-standard docs/)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add docs/
             git commit -m "ci: rebuild packages and refresh apt index [skip ci]"
+            git pull --rebase origin main
             git push
           else
-            echo "docs/ sin cambios, nada que commitear"
+            echo "docs/ unchanged, nothing to commit"
           fi
