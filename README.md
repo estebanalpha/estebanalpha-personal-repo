@@ -28,11 +28,12 @@ pkg upgrade   # picks up updates to any package from this repo
 ### Packages
 
 - **shizuku-semi-auto** — semi-automatic Shizuku activation via ADB
-  loopback. Android 10-: one-shot `adb tcpip 5555` from a second device
-  per boot, with USB-mode priming. Android 11+: `shizuku-pair` helper
-  for wireless-debugging pairing (one port entry per boot; the pairing
-  code is asked only once). Version-aware Shizuku start (13.6+ lib
-  glob, V4+ user_de, V3.x sdcard). See
+  loopback. Android 11+: pair once, then it reconnects by itself at
+  every boot (the wireless port is read from a notification). Any
+  Android: cable mode (`adb tcpip 5555` from a second device) with
+  optional USB-mode priming that restores your USB mode.
+  `shizuku-setup` configures everything. Version-aware Shizuku start
+  (13.6+ lib glob, V4+ user_de, V3.x sdcard). See
   [packages/shizuku-semi-auto/README.md](packages/shizuku-semi-auto/README.md).
 
 - rish-shizuku — Termux wrapper for the Shizuku `rish` shell. Installs
@@ -55,9 +56,12 @@ the wrapper clears `LD_PRELOAD` before launching `app_process`.
    `/opt/<name>` + `DEBIAN/postinst` pattern only when files must live
    in `$HOME`, such as Termux:Boot scripts or user-editable state.
 5. Add `DEBIAN/prerm` to clean up on removal if needed.
-6. Run `./build.sh` — rebuilds every package under `packages/` and
-   regenerates `docs/Packages` + `docs/Packages.gz`.
-7. Run `git add -A && git commit -m "..." && git push`.
+6. Run `./build.sh` for a local test build in `.build/out/`; `docs/` is
+   not touched.
+7. Commit your changes (never `docs/` by hand) and run `git pull --rebase`
+   before `git push`: after every push that touches packages, CI rebuilds
+   them and commits `docs/Packages`, `docs/Packages.gz` and the `.deb`
+   files.
 8. On any device that already added this repo:
    `pkg update && pkg install <name>`.
 
@@ -96,10 +100,11 @@ pkg upgrade   # trae actualizaciones de cualquier paquete de este repo
 ### Paquetes
 
 - **shizuku-semi-auto** — activación semi-automática de Shizuku vía ADB
-  loopback. Android 10-: `adb tcpip 5555` desde otro equipo una vez por
-  boot, con priming de modo USB. Android 11+: helper `shizuku-pair`
-  para emparejar por depuración inalámbrica (un puerto por boot; el
-  código se pide una sola vez). Arranque de Shizuku según versión
+  loopback. Android 11+: se empareja una vez y después se reconecta solo
+  en cada arranque (el puerto inalámbrico se lee de una notificación).
+  Cualquier Android: modo cable (`adb tcpip 5555` desde otro equipo) con
+  priming de modo USB opcional que restaura tu modo USB.
+  `shizuku-setup` lo configura todo. Arranque de Shizuku según versión
   (glob de lib 13.6+, user_de V4+, sdcard V3.x). Ver
   [packages/shizuku-semi-auto/README.md](packages/shizuku-semi-auto/README.md).
 
@@ -125,9 +130,12 @@ Instala `rish` en `$PREFIX/bin` y el loader de Shizuku en
    vivir en `$HOME`, por ejemplo scripts de Termux:Boot o estado editable
    por el usuario.
 5. Agrega `DEBIAN/prerm` para limpiar al desinstalar si hace falta.
-6. Ejecuta `./build.sh` — reconstruye todos los paquetes bajo `packages/`
-   y regenera `docs/Packages` + `docs/Packages.gz`.
-7. Ejecuta `git add -A && git commit -m "..." && git push`.
+6. Ejecuta `./build.sh` para una compilación de prueba local en
+   `.build/out/`; `docs/` no se toca.
+7. Haz commit de tus cambios (nunca de `docs/` a mano) y ejecuta
+   `git pull --rebase` antes de `git push`: tras cada push que toque
+   paquetes, el CI los reconstruye y hace commit de `docs/Packages`,
+   `docs/Packages.gz` y los `.deb`.
 8. En cualquier dispositivo que ya tenga el repo agregado:
    `pkg update && pkg install <nombre>`.
 

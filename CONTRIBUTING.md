@@ -20,6 +20,9 @@ A personal, unofficial APT repository for Termux, hosted at:
 https://github.com/estebanalpha/estebanalpha-personal-repo
 ```
 GitHub Pages serves `docs/` as a flat, unsigned repo (`[trusted=yes]`).
+`docs/` is built and committed by the GitHub Actions workflow
+(`.github/workflows/build.yml`) after every push that touches
+`packages/`, `build.sh` or the workflow itself — never by hand.
 Not the official Termux repos, not TUR. Packages are built with raw
 `dpkg-deb` — **not** the official termux-packages build system (no
 `TERMUX_PKG_*` variables, no cross-compiling container). Don't reach for
@@ -163,8 +166,8 @@ copy earlier in PATH is taking precedence.
 
 - **Original code** (yours or a prior AI session's) — `adb-connect`,
   `shizuku-watchdog`, `local-setup`. Simple `X.Y` (or `X.Y.Z`). Bump on
-  any content change, however small — `docs/` is rebuilt from source,
-  and an unbumped version won't show as an available upgrade. Never
+  any content change, however small — `docs/` is rebuilt from
+  source by CI, and an unbumped version won't show as an available upgrade. Never
   reuse a version number for different content.
 - **A package that repackages an existing upstream artifact** —
   `rish-shizuku` and similar. Debian's
@@ -221,12 +224,33 @@ enough that it adds no value.
 ### 10. Maintainer scripts (`postinst`/`prerm`/etc.)
 
 - Shebang per §4; start with `set -e`.
-- Non-interactive. Idempotent — must be safe to run twice.
+- Non-interactive by default. Idempotent — must be safe to run twice. An
+  interactive step (a setup wizard) is allowed only when gated by a
+  terminal check (`[ -t 0 ]`); it must never block an unattended
+  install, and the package must work with defaults when it is skipped.
 - Print a bilingual final message (see §5's format).
 - `prerm` removes only what the package itself created — never user
   data.
 - Don't download required files during install unless that's a
   deliberate, documented design choice.
+
+#### 10.1 Interactive setup + configuration file (optional pattern)
+
+For packages that need user choices (see `shizuku-semi-auto`):
+- The wizard is a normal command in `$PREFIX/bin` (e.g. `<n>-setup`), so
+  the user can re-run it any time. `postinst` calls it only when
+  `[ -t 0 ]` is true, with a flag such as `--postinst` that asks whether
+  to repeat the setup when a configuration already exists (default: keep).
+  Without a terminal, `postinst` just starts the services with defaults
+  and tells the user to run the wizard.
+- Settings go in `~/.config/<n>/config` as plain `KEY=value` lines,
+  parsed by a loop with a whitelist of known keys — never `source`d. The
+  configuration is user data: `prerm` keeps it.
+- Anything the wizard or `postinst` starts in the background must be
+  detached with every file descriptor redirected
+  (`nohup cmd </dev/null >/dev/null 2>&1 &`), or dpkg waits for it.
+- Shared helpers for a package's commands live in
+  `$PREFIX/lib/<n>/` and are sourced, never executed.
 
 ### 11. `build.sh` — required behavior, don't regress these
 
@@ -254,10 +278,14 @@ you touch `build.sh`, don't reintroduce these:
   silently-into-corruption the first time it runs on Termux (the `>`
   redirect truncates the output file before the missing-command error
   surfaces).
-- **Force `chmod 755` on each package's `DEBIAN/` directory** before
-  building. Permissions can drift to `700` after a `tar`/`cp`
-  round-trip (observed after extracting a tarball on Termux); `dpkg-deb`
-  refuses to build otherwise.
+- **Normalize modes in the staging copy**, never in the source tree:
+  directories 755, files 644, anything already executable 755, and
+  everything under `usr/bin/` plus the maintainer scripts 755. Modes
+  drift (a `tar`/`cp` round trip, or a file copied from shared storage
+  loses its executable bit), and without this the `.deb` bytes would
+  depend on the umask of the machine that builds it — Termux and CI must
+  produce identical files. `dpkg-deb` also refuses a `DEBIAN/` that is
+  not 755.
 - **`SOURCE_DATE_EPOCH` is derived per package**, from the latest
   commit that touched `packages/<name>/` specifically — not from the
   repo's overall HEAD. `dpkg-deb` embeds a build timestamp via gzip; if
@@ -268,12 +296,19 @@ you touch `build.sh`, don't reintroduce these:
   timestamp only for a package with no commit history yet (just
   added, not committed).
 - Old `.deb` files for a package are deleted before rebuilding it, so a
-  version bump doesn't leave a stale file in `docs/` next to the new
-  one.
+  version bump doesn't leave a stale file in the output directory next
+  to the new one.
+- **`Packages.gz` is compressed with `gzip -n`** (no name or timestamp in
+  the header), so an unchanged index is byte-identical and CI does not
+  create empty commits.
+- **Two output modes.** `./build.sh` writes to `.build/out/` (local test
+  build; `docs/` is not touched). `./build.sh --publish` writes to
+  `docs/` and is meant for the CI workflow only.
 
-Always run `./build.sh` after any change under `packages/`, then read
-`git status` before committing — confirm only the files you expect
-changed. If something you didn't touch shows as modified, find out why
+Always run `./build.sh` after any change under `packages/` (it only
+produces a local test build), then read `git status` before committing —
+confirm only the files you expect changed; `docs/` must never show up as
+modified. If something you didn't touch shows as modified, find out why
 before proceeding.
 
 ### 12. Appendix: wrapping a Shizuku/rish-style tool, or anything that launches `/system/bin/*`
@@ -321,25 +356,25 @@ upstream version (§6).
 ### 14. Before committing — run this
 
 ```sh
-bash -n packages/<name>/DEBIAN/postinst
-bash -n packages/<name>/DEBIAN/prerm 2>/dev/null || true
-bash -n packages/<name>/data/data/com.termux/files/usr/bin/<command>
-head -n1 packages/<name>/DEBIAN/postinst
-head -n1 packages/<name>/data/data/com.termux/files/usr/bin/<command>
+bash -n packages/<n>/DEBIAN/postinst
+bash -n packages/<n>/DEBIAN/prerm 2>/dev/null || true
+bash -n packages/<n>/data/data/com.termux/files/usr/bin/<command>
+head -n1 packages/<n>/DEBIAN/postinst
+head -n1 packages/<n>/data/data/com.termux/files/usr/bin/<command>
 
-./build.sh
+./build.sh   # local test build into .build/out/ — docs/ is not touched
 
-dpkg-deb -c docs/<name>_*_all.deb
+dpkg-deb -c .build/out/<n>_*_all.deb
 # every line must start with ./data/data/com.termux/files/usr/... —
 # if you see ./README.md, ./build.sh, or ./DEBIAN, the staging step in
 # build.sh regressed (see §11).
-dpkg-deb -c docs/<name>_*_all.deb | grep -E ' \./README\.md$| \./build\.sh$| \./DEBIAN' && echo "LEAK" || echo OK
+dpkg-deb -c .build/out/<n>_*_all.deb | grep -E ' \./README\.md$| \./build\.sh$| \./DEBIAN' && echo "LEAK" || echo OK
 
-dpkg-deb -I docs/<name>_*_all.deb
+dpkg-deb -I .build/out/<n>_*_all.deb
 ```
 If you have a real device to test on:
 ```sh
-pkg install --reinstall ./docs/<name>_<version>_all.deb
+pkg install --reinstall ./.build/out/<n>_<version>_all.deb
 hash -r
 command -v <command>
 type -a <command>   # if something else shadows it earlier in PATH
@@ -347,9 +382,14 @@ type -a <command>   # if something else shadows it earlier in PATH
 
 ### 15. After pushing — verify the live repo
 
+Run `git pull --rebase` before every push: the CI bot commits to `main`
+(see below), so your copy may be behind. After a push that touches
+`packages/`, `build.sh` or the workflow, the `build-repo` run in GitHub
+Actions rebuilds the packages and commits `docs/` as
+`github-actions[bot]`. Wait for it to finish before checking:
 ```sh
 curl -fsSL https://estebanalpha.github.io/estebanalpha-personal-repo/Packages.gz \
-  | gunzip | awk '/^Package: <name>$/,/^$/'
+  | gunzip | awk '/^Package: <n>$/,/^$/'
 ```
 404s on `InRelease`/`Release` from apt are normal for an unsigned flat
 repo — what matters is that `Packages(.gz)` and the `.deb` itself
@@ -368,7 +408,8 @@ you'll still need to add `data/.../opt/<name>/`, `postinst`, and
 
 One logical change per commit — don't bundle an unrelated `build.sh`
 fix into a package-content commit, or vice versa. Commit messages in
-English, short and descriptive.
+English, short and descriptive. Run `git pull --rebase` before every
+push, and never commit `docs/` by hand — CI owns it.
 
 ---
 
@@ -381,7 +422,9 @@ Un repositorio APT personal y no oficial para Termux, alojado en:
 https://github.com/estebanalpha/estebanalpha-personal-repo
 ```
 GitHub Pages sirve `docs/` como repo plano y sin firmar
-(`[trusted=yes]`). No son los repos oficiales de Termux, ni el TUR. Los
+(`[trusted=yes]`). `docs/` lo construye y commitea el workflow de
+GitHub Actions (`.github/workflows/build.yml`) tras cada push que toque
+`packages/`, `build.sh` o el propio workflow — nunca a mano. No son los repos oficiales de Termux, ni el TUR. Los
 paquetes se construyen con `dpkg-deb` directo — **no** con el sistema
 de build oficial de termux-packages (sin variables `TERMUX_PKG_*`, sin
 contenedor de cross-compilación). No recurras a ese sistema acá.
@@ -570,7 +613,7 @@ echo es > $PREFIX/etc/estebanalpha-repo/lang.conf   # o "en"
 - **Código propio** (tuyo o de una sesión de IA anterior) —
   `adb-connect`, `shizuku-watchdog`, `local-setup`. `X.Y` simple (o
   `X.Y.Z`). Subilo con cualquier cambio de contenido, por chico que
-  sea — `docs/` se reconstruye desde la fuente, y una versión no
+  sea — `docs/` lo reconstruye el CI desde la fuente, y una versión no
   subida no va a aparecer como actualización disponible. Nunca
   reutilices un número de versión para contenido distinto.
 - **Un paquete que reempaqueta un artefacto de otro proyecto** —
@@ -631,13 +674,35 @@ el paquete es lo bastante trivial como para que no aporte nada.
 ### 10. Maintainer scripts (`postinst`/`prerm`/etc.)
 
 - Shebang según §4; empezar con `set -e`.
-- No interactivos. Idempotentes — deben poder correr dos veces sin
-  romper.
+- No interactivos por defecto. Idempotentes — deben poder correr dos
+  veces sin romper. Un paso interactivo (un asistente de configuración)
+  solo se permite si está condicionado a una terminal (`[ -t 0 ]`); no
+  debe bloquear una instalación desatendida, y el paquete debe funcionar
+  con valores por defecto cuando se omite.
 - Imprimir un mensaje final bilingüe (formato de §5).
 - `prerm` remueve solo lo que el propio paquete creó — nunca datos del
   usuario.
 - No descargar archivos obligatorios durante la instalación salvo que
   sea una decisión de diseño deliberada y documentada.
+
+#### 10.1 Asistente de configuración + archivo de configuración (patrón opcional)
+
+Para paquetes que necesitan decisiones del usuario (ver `shizuku-semi-auto`):
+- El asistente es un comando normal en `$PREFIX/bin` (p. ej.
+  `<n>-setup`), así el usuario puede volver a ejecutarlo cuando quiera.
+  `postinst` lo llama solo si `[ -t 0 ]` es verdadero, con una opción
+  como `--postinst` que pregunta si se repite la configuración cuando ya
+  existe una (por defecto: conservarla). Sin terminal, `postinst` solo
+  inicia los servicios con valores por defecto y avisa de que se ejecute
+  el asistente.
+- Los ajustes van en `~/.config/<n>/config` como líneas `CLAVE=valor`,
+  leídas con un bucle con lista blanca de claves conocidas — nunca con
+  `source`. La configuración es dato del usuario: `prerm` la conserva.
+- Todo lo que el asistente o `postinst` inicie en segundo plano debe
+  desacoplarse con todos los descriptores redirigidos
+  (`nohup cmd </dev/null >/dev/null 2>&1 &`), o dpkg se queda esperando.
+- Las funciones compartidas de los comandos de un paquete viven en
+  `$PREFIX/lib/<n>/` y se cargan con `source`, nunca se ejecutan.
 
 ### 11. `build.sh` — comportamiento obligatorio, no lo regresiones
 
@@ -666,10 +731,14 @@ Otros requisitos ya vigentes — verificá que sigan ahí si tocás
   después falla de forma silenciosa-hasta-corromper la primera vez que
   corre en Termux (el redirect `>` trunca el archivo de salida antes
   de que aparezca el error de comando faltante).
-- **Forzar `chmod 755` en la carpeta `DEBIAN/` de cada paquete** antes
-  de construir. Los permisos pueden terminar en `700` tras un viaje de
-  ida y vuelta por `tar`/`cp` (se observó al extraer un tarball en
-  Termux); `dpkg-deb` se niega a construir si no.
+- **Normalizar los permisos en la copia de staging**, nunca en el árbol
+  fuente: directorios 755, archivos 644, lo que ya sea ejecutable 755, y
+  todo lo que esté bajo `usr/bin/` más los maintainer scripts 755. Los
+  permisos se desvían (un viaje por `tar`/`cp`, o un archivo copiado
+  desde el almacenamiento compartido pierde el bit de ejecución), y sin
+  esto los bytes del `.deb` dependerían del umask de la máquina que
+  construye — Termux y el CI deben producir archivos idénticos.
+  `dpkg-deb` además se niega a construir si `DEBIAN/` no es 755.
 - **`SOURCE_DATE_EPOCH` se deriva por paquete**, del último commit que
   tocó `packages/<nombre>/` puntualmente — no del HEAD general del
   repo. `dpkg-deb` incrusta un timestamp de build vía gzip; si el
@@ -680,13 +749,20 @@ Otros requisitos ya vigentes — verificá que sigan ahí si tocás
   general del repo solo para un paquete sin historial de git todavía
   (recién agregado, sin commitear).
 - Los `.deb` viejos de un paquete se borran antes de reconstruirlo,
-  para que un bump de versión no deje un archivo viejo en `docs/`
-  junto al nuevo.
+  para que un bump de versión no deje un archivo viejo en el directorio
+  de salida junto al nuevo.
+- **`Packages.gz` se comprime con `gzip -n`** (sin nombre ni fecha en la
+  cabecera), así un índice sin cambios queda idéntico byte a byte y el
+  CI no crea commits vacíos.
+- **Dos modos de salida.** `./build.sh` escribe en `.build/out/`
+  (compilación de prueba local; `docs/` no se toca). `./build.sh
+  --publish` escribe en `docs/` y es solo para el workflow de CI.
 
 Corré siempre `./build.sh` después de cualquier cambio bajo
-`packages/`, y leé el `git status` antes de commitear — confirmá que
-solo cambió lo que esperabas. Si algo que no tocaste aparece
-modificado, averiguá por qué antes de seguir.
+`packages/` (solo produce una compilación de prueba local), y leé el
+`git status` antes de commitear — confirmá que solo cambió lo que
+esperabas; `docs/` nunca debe aparecer como modificado. Si algo que no
+tocaste aparece modificado, averiguá por qué antes de seguir.
 
 ### 12. Apéndice: envolver una herramienta estilo Shizuku/rish, o cualquier cosa que lance `/system/bin/*`
 
@@ -732,7 +808,7 @@ dependencias reales (§8); necesita `$HOME`/boot (§3.1); necesita
 Shizuku/adb/Termux:API/Termux:Boot (documentar, no va en `Depends`);
 lanza binarios del sistema (§12); hay una versión upstream clara (§6).
 
-### 14. Antes de commitear — corré esto
+### 14. Antes de commitear — ejecuta esto
 
 ```sh
 bash -n packages/<nombre>/DEBIAN/postinst
@@ -741,26 +817,32 @@ bash -n packages/<nombre>/data/data/com.termux/files/usr/bin/<comando>
 head -n1 packages/<nombre>/DEBIAN/postinst
 head -n1 packages/<nombre>/data/data/com.termux/files/usr/bin/<comando>
 
-./build.sh
+./build.sh   # compilación de prueba local en .build/out/ — docs/ no se toca
 
-dpkg-deb -c docs/<nombre>_*_all.deb
+dpkg-deb -c .build/out/<nombre>_*_all.deb
 # cada línea tiene que empezar con ./data/data/com.termux/files/usr/... —
 # si ves ./README.md, ./build.sh, o ./DEBIAN, el staging de build.sh
 # regresionó (ver §11).
-dpkg-deb -c docs/<nombre>_*_all.deb | grep -E ' \./README\.md$| \./build\.sh$| \./DEBIAN' && echo "LEAK" || echo OK
+dpkg-deb -c .build/out/<nombre>_*_all.deb | grep -E ' \./README\.md$| \./build\.sh$| \./DEBIAN' && echo "LEAK" || echo OK
 
-dpkg-deb -I docs/<nombre>_*_all.deb
+dpkg-deb -I .build/out/<nombre>_*_all.deb
 ```
-Si tenés un dispositivo real para probar:
+Si tienes un dispositivo real para probar:
 ```sh
-pkg install --reinstall ./docs/<nombre>_<version>_all.deb
+pkg install --reinstall ./.build/out/<nombre>_<version>_all.deb
 hash -r
 command -v <comando>
 type -a <comando>   # si algo más lo tapa antes en el PATH
 ```
 
-### 15. Después de pushear — verificá el repo en vivo
+### 15. Después de pushear — verifica el repo en vivo
 
+Ejecuta `git pull --rebase` antes de cada push: el bot del CI hace
+commits en `main` (ver abajo), así que tu copia puede ir por detrás.
+Tras un push que toque `packages/`, `build.sh` o el workflow, la
+ejecución `build-repo` de GitHub Actions reconstruye los paquetes y
+hace commit de `docs/` como `github-actions[bot]`. Espera a que
+termine antes de comprobar:
 ```sh
 curl -fsSL https://estebanalpha.github.io/estebanalpha-personal-repo/Packages.gz \
   | gunzip | awk '/^Package: <nombre>$/,/^$/'
@@ -783,4 +865,6 @@ mano — el generador todavía no cubre ese caso.
 
 Un cambio lógico por commit — no mezcles un fix de `build.sh` no
 relacionado con un commit de contenido de paquete, ni al revés.
-Mensajes de commit en inglés, cortos y descriptivos.
+Mensajes de commit en inglés, cortos y descriptivos. Ejecuta
+`git pull --rebase` antes de cada push y nunca hagas commit de `docs/`
+a mano — es del CI.
