@@ -1,124 +1,182 @@
 #!/data/data/com.termux/files/usr/bin/bash
 #
-# adb-connect / EN: Persistent daemon that maintains a loopback ADB-over-
-# WiFi connection to this device and works around a USB-mode-transition
-# freeze on some devices/ROMs (pre-Android-11, no native wireless-debug
-# toggle). Detects when "adb tcpip 5555" is run from a second device and
-# connects to itself over 127.0.0.1, then applies a USB-mode "priming"
-# step before the initiating cable is disconnected. On Android 11+
-# (SDK >= 30) the priming is skipped: the freeze was only diagnosed on
-# older devices, and modern adbd handles the USB->TCP transition.
+# adb-connect: persistent daemon that keeps a loopback ADB connection to
+# this same device alive, in one of two modes (config key MODE):
 #
-# adb-connect / ES: Daemon persistente que mantiene una conexión ADB por
-# WiFi (loopback) hacia este mismo equipo, y evita un freeze de transición
-# de modo USB presente en algunos dispositivos/ROMs (Android pre-11, sin
-# toggle nativo de depuración inalámbrica). Detecta cuándo se corre
-# "adb tcpip 5555" desde otro equipo, se conecta a sí mismo por
-# 127.0.0.1, y aplica un "priming" de modo USB antes de que se desconecte
-# el cable que inició la sesión. En Android 11+ (SDK >= 30) el priming
-# se omite: el freeze solo se diagnostico en equipos viejos, y el adbd
-# moderno maneja bien la transicion USB->TCP.
+#   cable    - Waits for "adb tcpip 5555" to be run from a second device
+#              or a PC, connects to 127.0.0.1:5555 right away and, if
+#              enabled, applies a USB-mode "priming" step before the
+#              initiating cable is unplugged.
+#   wireless - Android 11+. Finds the Wireless debugging port (last known
+#              port, then notifications of the configured app), connects
+#              over TLS and pins adbd to 127.0.0.1:5555. Needs a one-time
+#              pairing (shizuku-pair); afterwards it needs no input.
 #
-# Design notes / Notas de diseño:
-#   - Sondea localhost:5555 con un socket TCP crudo (bash /dev/tcp) antes
-#     de invocar adb, para reaccionar en el mismo segundo en que se
-#     activa el modo TCP en el otro equipo, sin reiniciar el servidor de
-#     adb en cada chequeo.
-#   - Todo comando adb tiene timeout: si el freeze ocurre a mitad de una
-#     verificación, el daemon nunca queda colgado — siempre vuelve a
-#     intentar en el siguiente ciclo.
-#   - El priming (solo SDK <= 29) fuerza dos transiciones de modo USB
-#     (none -> mtp) en vez de fijar un único valor: un modo que ya estaba
-#     activo no dispara el cambio de estado necesario para evitar el
-#     freeze; forzar un estado intermedio garantiza la transición sin
-#     depender del estado previo.
-#   - La verificación de "conexión viva" ejecuta un shell real (con
-#     timeout), no solo "get-state" — get-state puede seguir reportando
-#     "device" con el shell ya congelado.
+# Design notes:
+#   - The cable-mode wait polls port 5555 with a raw TCP socket (bash
+#     /dev/tcp) so it reacts within a second without restarting the adb
+#     server on every check.
+#   - Every adb call has a timeout, so a frozen shell can never hang the
+#     daemon; it just retries on the next cycle.
+#   - The priming removes the need for a mode change at cable-unplug time
+#     on devices where that transition freezes the ADB-over-network shell.
+#     It switches USB functions to a different mode and back to the one
+#     the user had, so the user's mode is never changed.
+#   - "Connection alive" runs a real shell command: get-state can still
+#     report "device" while the shell is frozen.
+#   - One log line per attempt, so repeated failures collapse into "xN".
 
-ADB=/data/data/com.termux/files/usr/bin/adb
-STATE_FILE=/data/data/com.termux/files/home/.local/tmp/adb-serial.txt
-LOG=/data/data/com.termux/files/home/.local/tmp/adb-connect.log
-SERIAL="127.0.0.1:5555"
+. /data/data/com.termux/files/usr/lib/shizuku-semi-auto/common.sh
+sa_load_config
 
-FAST_POLL=1            # puerto todavía cerrado: cada cuánto revisa (barato, sin tocar adb)
-KEEPALIVE_INTERVAL=45  # ya conectado y sano: cada cuánto solo confirma
-RETRY_BACKOFF=10       # puerto abierto pero connect/priming falló: cuánto espera antes de reintentar
+if ! sa_lock adb-connect; then
+    sa_say "adb-connect ya está en ejecución." "adb-connect is already running."
+    exit 0
+fi
+sa_log_init "$SA_TMP/adb-connect.log"
 
-# Android 11+ => sin priming USB (el freeze solo se vio en <= Android 10)
-SDK=$(/system/bin/getprop ro.build.version.sdk 2>/dev/null)
-case "$SDK" in ''|*[!0-9]*) SDK=0 ;; esac
+NID=shizuku-sa-adb
+FAST_POLL=1            # cable mode, port still closed: seconds between probes
+KEEPALIVE_INTERVAL=45  # connected and healthy: seconds between checks
+RETRY_INTERVAL=10      # cable mode, connect/priming failed: seconds before retrying
+WIRELESS_RETRY=15      # wireless mode, nothing found: seconds before retrying
 
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"; }
-
-port_open() {
-    timeout 1 bash -c "echo > /dev/tcp/127.0.0.1/5555" 2>/dev/null
+cur_serial() {
+    if [ -s "$SA_STATE_FILE" ]; then cat "$SA_STATE_FILE"; else printf '%s' "$SA_FIXED_SERIAL"; fi
 }
 
-is_alive() {
-    [ "$(timeout 5 "$ADB" -s "$SERIAL" shell echo ping 2>/dev/null)" = "ping" ]
+priming_wanted() {
+    case "$SA_PRIMING" in
+        on)  return 0 ;;
+        off) return 1 ;;
+        *)   [ "$SA_MODE" = cable ] ;;
+    esac
 }
 
-try_connect() {
-    log "--- puerto abierto: conectando YA, antes de que desconecten el cable ---"
-    timeout 5 "$ADB" kill-server 2>&1 | while read -r l; do log "adb kill: $l"; done
+# Current USB functions without the "adb" token, comma separated.
+usb_functions() {
+    local raw
+    raw=$(timeout 5 "$SA_ADB" -s "$1" shell "svc usb getFunctions" 2>/dev/null | tr -d '\r' | head -n1)
+    case "$raw" in
+        ''|*[!a-z0-9_,]*)
+            raw=$(timeout 5 "$SA_ADB" -s "$1" shell "getprop sys.usb.config" 2>/dev/null | tr -d '\r' | head -n1)
+            ;;
+    esac
+    printf '%s' "$raw" | tr ',' '\n' | grep -v -e '^adb$' -e '^$' | paste -sd, -
+}
+
+# Switch to a different USB mode and back to the original one.
+# Prints "<original>><other>><original>".
+prime_usb() {
+    local s="$1" cur alt
+    cur=$(usb_functions "$s")
+    [ -n "$cur" ] || cur=none
+    case ",$cur," in
+        *,mtp,*) alt=none ;;
+        *)       alt=mtp ;;
+    esac
+    timeout 5 "$SA_ADB" -s "$s" shell "svc usb setFunctions $alt" >/dev/null 2>&1
     sleep 1
-    CONNECT_OUT=$(timeout 8 "$ADB" connect "$SERIAL" 2>&1)
-    log "Resultado connect ($SERIAL): $CONNECT_OUT"
+    timeout 5 "$SA_ADB" -s "$s" shell "svc usb setFunctions $cur" >/dev/null 2>&1
+    sleep 2
+    printf '%s>%s>%s' "$cur" "$alt" "$cur"
+}
 
-    TEST1=$(timeout 5 "$ADB" -s "$SERIAL" shell echo hola 2>&1)
-    log "Test post-connect: $TEST1"
-    if [ "$TEST1" != "hola" ]; then
-        log "Sin respuesta (o freeze) en el primer intento."
+try_connect_cable() {
+    local out t1 t2 note="no priming"
+    timeout 5 "$SA_ADB" kill-server >/dev/null 2>&1
+    sleep 1
+    out=$(timeout 8 "$SA_ADB" connect "$SA_FIXED_SERIAL" 2>&1)
+    t1=$(timeout 5 "$SA_ADB" -s "$SA_FIXED_SERIAL" shell echo hola 2>&1)
+    if [ "$t1" != "hola" ]; then
+        sa_logt "Puerto 5555 abierto pero el shell no responde (connect: $out)." \
+                "Port 5555 is open but the shell does not respond (connect: $out)."
         return 1
     fi
-
-    if [ "$SDK" -ge 30 ]; then
-        log "Android 11+ (SDK $SDK): se omite el priming USB."
-        TEST2="$TEST1"
-    else
-        log "Priming: forzando transición real de modo USB (none -> mtp)..."
-        timeout 5 "$ADB" -s "$SERIAL" shell "svc usb setFunctions none" 2>&1 | while read -r l; do log "prime1: $l"; done
-        sleep 1
-        timeout 5 "$ADB" -s "$SERIAL" shell "svc usb setFunctions mtp" 2>&1 | while read -r l; do log "prime2: $l"; done
-        sleep 2
-
-        TEST2=$(timeout 5 "$ADB" -s "$SERIAL" shell echo hola 2>&1)
-        log "Test post-priming: $TEST2"
+    t2="$t1"
+    if priming_wanted; then
+        note="USB priming $(prime_usb "$SA_FIXED_SERIAL")"
+        t2=$(timeout 5 "$SA_ADB" -s "$SA_FIXED_SERIAL" shell echo hola 2>&1)
     fi
+    if [ "$t2" != "hola" ]; then
+        sa_logt "El shell dejó de responder tras el priming USB ($note); ¿se desconectó el cable antes de tiempo?" \
+                "The shell stopped responding after the USB priming ($note); was the cable unplugged too early?"
+        return 1
+    fi
+    echo "$SA_FIXED_SERIAL" > "$SA_STATE_FILE"
+    sa_logt "Conectado a $SA_FIXED_SERIAL ($note)." "Connected to $SA_FIXED_SERIAL ($note)."
+    return 0
+}
 
-    if [ "$TEST2" = "hola" ]; then
-        echo "$SERIAL" > "$STATE_FILE"
-        log "ÉXITO. Serial guardado: $SERIAL"
+wireless_cycle() {
+    if sa_port_open 5555; then
+        timeout 8 "$SA_ADB" connect "$SA_FIXED_SERIAL" >/dev/null 2>&1
+        if sa_alive "$SA_FIXED_SERIAL"; then
+            echo "$SA_FIXED_SERIAL" > "$SA_STATE_FILE"
+            sa_logt "Conectado a $SA_FIXED_SERIAL." "Connected to $SA_FIXED_SERIAL."
+            return 0
+        fi
+    fi
+    if sa_wireless_connect; then
+        if [ "$SA_PINNED" = 1 ]; then
+            sa_logt "Depuración inalámbrica en el puerto $SA_WPORT; adbd fijado en $SA_FIXED_SERIAL." \
+                    "Wireless debugging on port $SA_WPORT; adbd pinned to $SA_FIXED_SERIAL."
+        else
+            sa_logt "Depuración inalámbrica en el puerto $SA_WPORT; no se pudo fijar el 5555, se usa $SA_SERIAL_USED." \
+                    "Wireless debugging on port $SA_WPORT; could not pin 5555, using $SA_SERIAL_USED."
+        fi
         return 0
     fi
-
-    log "ERROR: no se pudo estabilizar la conexión en este intento (¿se desconectó el cable antes de tiempo?)."
+    if [ "$SA_WREASON" = no_port ]; then
+        sa_logt "No se encontró el puerto de la depuración inalámbrica (¿está activada? ¿hay una notificación con el puerto?)." \
+                "Wireless debugging port not found (is it on? is there a notification showing the port?)."
+        sa_notify_set "$NID" no_port "$(sa_t "ADB inalámbrico" "Wireless ADB")" \
+            "$(sa_t "No se encuentra el puerto de la depuración inalámbrica. Actívala y revisa la app de notificación del puerto." \
+                    "Wireless debugging port not found. Turn it on and check the port notification app.")"
+    else
+        sa_logt "Puerto $SA_WPORT abierto pero no se pudo conectar; ¿falta emparejar? Ejecuta shizuku-pair." \
+                "Port $SA_WPORT is open but connecting failed; is the pairing missing? Run shizuku-pair."
+        sa_notify_set "$NID" connect_failed "$(sa_t "ADB inalámbrico" "Wireless ADB")" \
+            "$(sa_t "No se pudo conectar. Puede faltar el emparejamiento: ejecuta shizuku-pair en Termux." \
+                    "Could not connect. Pairing may be missing: run shizuku-pair in Termux.")"
+    fi
     return 1
 }
 
-: > "$LOG"  # 1 log por ejecución: se trunca al arrancar, no se acumula entre boots
-log "=== adb-connect daemon started — PID $$ — SDK $SDK ==="
+sa_logt "adb-connect iniciado (PID $$, modo $SA_MODE, SDK $(sa_sdk))." \
+        "adb-connect started (PID $$, mode $SA_MODE, SDK $(sa_sdk))."
 
 CONNECTED=0
 while true; do
-    if is_alive; then
+    SERIAL=$(cur_serial)
+    if sa_alive "$SERIAL"; then
         CONNECTED=1
+        sa_notify_healthy "$NID"
         sleep "$KEEPALIVE_INTERVAL"
         continue
     fi
 
     if [ "$CONNECTED" -eq 1 ]; then
-        log "Se perdió la respuesta en $SERIAL (freeze o desconexión) — reintentando."
+        sa_logt "Se perdió la respuesta de $SERIAL; reintentando." \
+                "Lost the response from $SERIAL; retrying."
         CONNECTED=0
     fi
 
-    if port_open; then
-        if try_connect; then
+    if [ "$SA_MODE" = wireless ]; then
+        if wireless_cycle; then
             CONNECTED=1
+            sa_notify_healthy "$NID"
             sleep "$KEEPALIVE_INTERVAL"
         else
-            sleep "$RETRY_BACKOFF"
+            sleep "$WIRELESS_RETRY"
+        fi
+    elif sa_port_open 5555; then
+        if try_connect_cable; then
+            CONNECTED=1
+            sa_notify_healthy "$NID"
+            sleep "$KEEPALIVE_INTERVAL"
+        else
+            sleep "$RETRY_INTERVAL"
         fi
     else
         sleep "$FAST_POLL"

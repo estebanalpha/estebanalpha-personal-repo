@@ -1,144 +1,122 @@
 #!/data/data/com.termux/files/usr/bin/bash
 #
-# shizuku-pair / EN: One-shot helper for the Android 11+ flow. Wireless
-# debugging uses TLS with a rotating port and a one-time pairing code;
-# without root neither is readable programmatically (mdns discovery is not
-# available in the Termux adb build), so this script automates everything
-# EXCEPT reading two numbers off the Settings screen. Pairing credentials
-# persist across reboots; only the port rotates per boot. Steps:
-#   1. (first time only) pair with the 6-digit code from the pairing dialog
-#   2. connect to the TLS port shown on the main wireless-debugging screen
-#   3. pin adbd to the fixed loopback port 5555 (falls back to using the
-#      TLS port directly if the pin fails)
-# After this, adb-connect / shizuku-watchdog maintain everything.
+# shizuku-pair: guided helper for the Android 11+ wireless flow.
 #
-# shizuku-pair / ES: Helper de un solo uso para el flujo de Android 11+.
-# La depuración inalámbrica usa TLS con puerto rotativo y código de
-# emparejamiento de un solo uso; sin root ninguno se puede leer por
-# programa (mdns no está disponible en el build de adb de Termux), así
-# que este script automatiza TODO excepto leer dos números de la pantalla
-# de Ajustes. Las credenciales de emparejamiento persisten entre boots;
-# solo el puerto rota por boot. Pasos:
-#   1. (solo la primera vez) emparejar con el código de 6 dígitos
-#   2. conectar al puerto TLS de la pantalla principal de depuración
-#      inalámbrica
-#   3. fijar adbd al puerto loopback 5555 (si falla, usa el puerto TLS
-#      directamente)
-# Después, adb-connect / shizuku-watchdog mantienen todo.
+# Wireless debugging uses TLS with a one-time pairing code and a TLS port
+# that changes whenever the feature is switched on. Pairing credentials
+# persist, so after the first pairing adb-connect needs no input. This
+# command covers what cannot be automated:
+#   1. Try the automatic path first (last known port, then the port shown
+#      by a notification of the configured app). Success ends the run.
+#   2. If the device is not paired yet, pair it with the pairing port and
+#      the 6-digit code shown in Settings (needed once).
+#   3. If no port could be found, ask for it (main Wireless debugging
+#      screen, not the pairing dialog).
+# On success adbd is pinned to 127.0.0.1:5555 and the serial is saved for
+# adb-connect and shizuku-watchdog.
 
-ADB=/data/data/com.termux/files/usr/bin/adb
-HOME_DIR=/data/data/com.termux/files/home
-STATE_FILE="$HOME_DIR/.local/tmp/adb-serial.txt"
-LOG="$HOME_DIR/.local/tmp/shizuku-pair.log"
-FIXED_SERIAL="127.0.0.1:5555"
+. /data/data/com.termux/files/usr/lib/shizuku-semi-auto/common.sh
+sa_load_config
+sa_log_init "$SA_TMP/shizuku-pair.log"
 
-# Idioma / Language
-case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in
-    es*) L=es ;;
-    *)   L=en ;;
-esac
+SDK=$(sa_sdk)
+if [ "$SDK" -lt 30 ]; then
+    sa_say "Esta herramienta es solo para Android 11+ (SDK $SDK). En tu versión usa el flujo por cable: 'adb tcpip 5555' desde otro equipo." \
+           "This helper is for Android 11+ only (SDK $SDK). On your version use the cable flow: 'adb tcpip 5555' from another device."
+    exit 1
+fi
 
-say() {
-    if [ "$L" = es ]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi
+ask() {
+    # ask VAR "es" "en" -> reads one line into VAR (empty on EOF)
+    local __v
+    printf '%s ' "$(sa_t "$2" "$3")"
+    read -r __v || __v=""
+    printf -v "$1" '%s' "$__v"
 }
 
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
+finish_ok() {
+    sa_say "" ""
+    if [ "$SA_PINNED" = 1 ]; then
+        sa_say "Listo: adbd fijado en $SA_FIXED_SERIAL y estado guardado." \
+               "Done: adbd pinned to $SA_FIXED_SERIAL and state saved."
+    else
+        sa_say "Conectado por TLS en $SA_SERIAL_USED (no se pudo fijar el puerto 5555); estado guardado." \
+               "Connected over TLS at $SA_SERIAL_USED (could not pin port 5555); state saved."
+    fi
+    sa_say "El watchdog toma el estado en unos segundos y mantiene Shizuku activo." \
+           "The watchdog picks the state up within seconds and keeps Shizuku alive."
+    sa_say "Emparejado una vez, adb-connect se reconecta solo tras cada reinicio mientras la depuración inalámbrica esté activa y su puerto se pueda leer." \
+           "Once paired, adb-connect reconnects by itself after each reboot as long as Wireless debugging is on and its port can be read."
+    sa_logt "shizuku-pair finalizado ($SA_SERIAL_USED)." "shizuku-pair finished ($SA_SERIAL_USED)."
+}
 
-SDK=$(/system/bin/getprop ro.build.version.sdk 2>/dev/null)
-case "$SDK" in ''|*[!0-9]*) SDK=0 ;; esac
+timeout 8 "$SA_ADB" start-server >/dev/null 2>&1
 
-if [ "$SDK" -lt 30 ]; then
-    say "Este helper es solo para Android 11+ (SDK $SDK). En tu versión el flujo es por cable: 'adb tcpip 5555' desde otro equipo." \
-        "This helper is Android 11+ only (SDK $SDK). On your version use the cable flow: 'adb tcpip 5555' from another device."
-    exit 1
+sa_say "" ""
+sa_say "=== shizuku-pair (Android 11+) ===" "=== shizuku-pair (Android 11+) ==="
+sa_say "Mantén la depuración inalámbrica ACTIVADA durante todo el proceso." \
+       "Keep Wireless debugging ON during the whole process."
+sa_say "" ""
+sa_say "Buscando el puerto (último puerto conocido y notificaciones)..." \
+       "Looking for the port (last known port and notifications)..."
+
+if sa_wireless_connect; then
+    sa_logt "Conexión automática por el puerto $SA_WPORT." "Automatic connection through port $SA_WPORT."
+    finish_ok
+    exit 0
 fi
 
-mkdir -p "$HOME_DIR/.local/tmp"
-: > "$LOG"
-log "shizuku-pair iniciado — SDK $SDK"
+if [ "$SA_WREASON" = connect_failed ]; then
+    sa_say "Se encontró el puerto $SA_WPORT pero no fue posible conectar: es probable que este equipo aún no esté emparejado." \
+           "Found port $SA_WPORT but could not connect: this device is probably not paired yet."
+else
+    sa_say "No se encontró el puerto automáticamente." "The port was not found automatically."
+fi
 
-timeout 8 "$ADB" start-server 2>/dev/null
-
-say ""
-say "=== shizuku-pair (Android 11+) ==="
-say "Mantené la Depuración inalámbrica ENCENDIDA durante todo el proceso." \
-    "Keep Wireless debugging ON during the whole process."
-
-# --- 1) emparejamiento (solo la primera vez) ---
-say ""
-say "¿Es la primera vez que emparejás este dispositivo? [s/N]" \
-    "Is this the first time pairing this device? [y/N]"
-read -r FIRST
+sa_say "" ""
+ask FIRST "¿Emparejar este equipo ahora (solo hace falta una vez)? [s/N]" \
+          "Pair this device now (only needed once)? [y/N]"
 case "$FIRST" in
     s|S|y|Y)
-        say "Abrí Ajustes > Opciones de desarrollador > Depuración inalámbrica >" \
-            "Open Settings > Developer options > Wireless debugging >"
-        say "'Emparejar dispositivo con código' y DEJÁ el diálogo abierto." \
-            "'Pair device with pairing code' and LEAVE the dialog open."
-        say "Ingresá el PUERTO del diálogo (ej: 34923):" \
-            "Enter the PORT from the dialog (e.g. 34923):"
-        read -r PPORT
-        say "Ingresá el CÓDIGO de 6 dígitos:" "Enter the 6-digit CODE:"
-        read -r CODE
-        log "pairing 127.0.0.1:$PPORT"
-        OUT=$(printf '%s\n' "$CODE" | timeout 20 "$ADB" pair "127.0.0.1:$PPORT" 2>&1)
-        log "pair output: $OUT"
+        sa_say "Ajustes > Opciones de desarrollador > Depuración inalámbrica >" \
+               "Settings > Developer options > Wireless debugging >"
+        sa_say "'Vincular dispositivo con código de vinculación' y DEJA el diálogo abierto." \
+               "'Pair device with pairing code' and LEAVE the dialog open."
+        ask PPORT "Puerto del diálogo (p. ej. 34923):" "Port from the dialog (e.g. 34923):"
+        ask CODE  "Código de 6 dígitos:" "6-digit code:"
+        OUT=$(printf '%s\n' "$CODE" | timeout 20 "$SA_ADB" pair "127.0.0.1:$PPORT" 2>&1)
         printf '%s\n' "$OUT"
         if ! printf '%s' "$OUT" | grep -q "Successfully paired"; then
-            say "El emparejamiento automático falló; probando interactivamente (escribí el código cuando lo pida):" \
-                "Automatic pairing failed; trying interactively (type the code when asked):"
-            timeout 30 "$ADB" pair "127.0.0.1:$PPORT" || true
+            sa_say "El emparejamiento automático falló; prueba de forma interactiva (escribe el código cuando lo pida):" \
+                   "Automatic pairing failed; trying interactively (type the code when asked):"
+            timeout 30 "$SA_ADB" pair "127.0.0.1:$PPORT" || true
         fi
-        ;;
-    *)
-        say "Saltando emparejamiento (las credenciales persisten entre boots)." \
-            "Skipping pairing (credentials persist across reboots)."
+        sa_logt "Emparejamiento intentado en el puerto $PPORT." "Pairing attempted on port $PPORT."
+        sa_say "Reintentando la conexión automática..." "Retrying the automatic connection..."
+        if sa_wireless_connect; then
+            finish_ok
+            exit 0
+        fi
         ;;
 esac
 
-# --- 2) conexión al puerto TLS ---
-say ""
-say "En la pantalla PRINCIPAL de Depuración inalámbrica (no el diálogo de" \
-    "On the MAIN Wireless debugging screen (not the pairing dialog),"
-say "emparejamiento) se muestra IP:PUERTO. Ingresá el PUERTO (ej: 46733):" \
-    "it shows IP:PORT. Enter the PORT (e.g. 46733):"
-read -r PORT
-log "connect 127.0.0.1:$PORT"
-OUT=$(timeout 10 "$ADB" connect "127.0.0.1:$PORT" 2>&1)
-log "connect output: $OUT"
-printf '%s\n' "$OUT"
-if [ "$(timeout 8 "$ADB" -s "127.0.0.1:$PORT" shell echo ping 2>/dev/null)" != "ping" ]; then
-    say "ERROR: no se pudo conectar al puerto $PORT. ¿Seguro que es el de la pantalla principal?" \
-        "ERROR: could not connect to port $PORT. Are you sure it is the main-screen one?"
+sa_say "" ""
+sa_say "En la pantalla PRINCIPAL de Depuración inalámbrica (no en el diálogo de vinculación) se muestra IP:PUERTO." \
+       "The MAIN Wireless debugging screen (not the pairing dialog) shows IP:PORT."
+ask PORT "Puerto (p. ej. 46733):" "Port (e.g. 46733):"
+case "$PORT" in ''|*[!0-9]*)
+    sa_say "Puerto no válido." "Invalid port."
+    exit 1
+    ;;
+esac
+
+if ! sa_try_port "$PORT"; then
+    sa_say "ERROR: no se pudo conectar al puerto $PORT. ¿Es el de la pantalla principal y el equipo está emparejado?" \
+           "ERROR: could not connect to port $PORT. Is it the main-screen one, and is the device paired?"
+    sa_logt "Conexión manual fallida en el puerto $PORT." "Manual connection failed on port $PORT."
     exit 1
 fi
-say "Conectado por TLS en 127.0.0.1:$PORT" "Connected over TLS at 127.0.0.1:$PORT"
-
-# --- 3) fijar el puerto 5555 (fallback: usar el TLS directo) ---
-say ""
-say "Fijando adbd al puerto 5555 (loopback, independiente del wifi)..." \
-    "Pinning adbd to port 5555 (loopback, wifi-independent)..."
-timeout 8 "$ADB" -s "127.0.0.1:$PORT" tcpip 5555 2>&1 | tee -a "$LOG"
-sleep 2
-OUT=$(timeout 10 "$ADB" connect "$FIXED_SERIAL" 2>&1)
-log "connect 5555 output: $OUT"
-printf '%s\n' "$OUT"
-if [ "$(timeout 8 "$ADB" -s "$FIXED_SERIAL" shell echo ping 2>/dev/null)" = "ping" ]; then
-    echo "$FIXED_SERIAL" > "$STATE_FILE"
-    say "ÉXITO: puerto fijado en $FIXED_SERIAL — estado guardado." \
-        "SUCCESS: pinned to $FIXED_SERIAL — state saved."
-else
-    say "No se pudo fijar el 5555; usando el puerto TLS directamente." \
-        "Could not pin 5555; using the TLS port directly."
-    echo "127.0.0.1:$PORT" > "$STATE_FILE"
-    say "Estado guardado: 127.0.0.1:$PORT" "State saved: 127.0.0.1:$PORT"
-fi
-
-say ""
-say "Listo. El watchdog toma el estado en <=10s y mantiene Shizuku vivo." \
-    "Done. The watchdog picks up the state within 10s and keeps Shizuku alive."
-say "Tras cada REINICIO el puerto TLS rota: volvé a correr shizuku-pair" \
-    "After each REBOOT the TLS port rotates: run shizuku-pair again"
-say "(ya no hace falta emparejar de nuevo, respondé N a la primera pregunta)." \
-    "(no need to pair again, answer N to the first question)."
-log "shizuku-pair finalizado — serial: $(cat "$STATE_FILE")"
+sa_say "Conectado por TLS en 127.0.0.1:$PORT. Fijando adbd al puerto 5555..." \
+       "Connected over TLS at 127.0.0.1:$PORT. Pinning adbd to port 5555..."
+sa_pin_save "$PORT"
+finish_ok

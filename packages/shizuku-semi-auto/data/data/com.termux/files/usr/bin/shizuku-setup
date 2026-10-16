@@ -1,0 +1,191 @@
+#!/data/data/com.termux/files/usr/bin/bash
+#
+# shizuku-setup: interactive configuration for shizuku-semi-auto.
+# Writes ~/.config/shizuku-semi-auto/config, runs shizuku-pair when the
+# wireless mode needs it, optionally relaxes Android's child-process
+# limit, and (re)starts the daemons so everything applies immediately.
+#
+# Internal flags used by the package scripts:
+#   --postinst   ask whether to repeat the setup when a config exists
+#   --start      only (re)start the daemons with the current config
+
+. /data/data/com.termux/files/usr/lib/shizuku-semi-auto/common.sh
+sa_load_config
+
+FLAG="${1:-}"
+
+start_daemons() {
+    pkill -f "$PREFIX/bin/adb-connect" 2>/dev/null
+    pkill -f "$PREFIX/bin/shizuku-watchdog" 2>/dev/null
+    sleep 1
+    command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock
+    nohup "$PREFIX/bin/adb-connect" </dev/null >/dev/null 2>&1 &
+    nohup "$PREFIX/bin/shizuku-watchdog" </dev/null >/dev/null 2>&1 &
+    disown -a 2>/dev/null
+    return 0
+}
+
+if [ "$FLAG" = --start ]; then
+    start_daemons
+    exit 0
+fi
+
+# ask VAR "es" "en" DEFAULT -> empty answer keeps DEFAULT
+ask() {
+    local __v
+    printf '%s [%s]: ' "$(sa_t "$2" "$3")" "$4"
+    read -r __v || __v=""
+    printf -v "$1" '%s' "${__v:-$4}"
+}
+
+# confirm "es" "en" Y|N -> exit status 0 means yes
+confirm() {
+    local __a def="$3" hint
+    if [ "$def" = Y ]; then hint="$(sa_t "S/n" "Y/n")"; else hint="$(sa_t "s/N" "y/N")"; fi
+    printf '%s [%s]: ' "$(sa_t "$1" "$2")" "$hint"
+    read -r __a || __a=""
+    case "$__a" in
+        s|S|y|Y|si|SI|yes|YES) return 0 ;;
+        n|N|no|NO) return 1 ;;
+        '') [ "$def" = Y ] ;;
+        *) return 1 ;;
+    esac
+}
+
+sa_say "" ""
+sa_say "=== shizuku-setup ===" "=== shizuku-setup ==="
+
+if [ "$FLAG" = --postinst ] && [ -f "$SA_CONF" ]; then
+    sa_say "Ya existe una configuración ($SA_CONF)." "A configuration already exists ($SA_CONF)."
+    if ! confirm "¿Repetir la configuración?" "Repeat the setup?" N; then
+        start_daemons
+        sa_say "Se conserva la configuración y se reiniciaron los servicios." \
+               "Configuration kept and the services were restarted."
+        exit 0
+    fi
+fi
+
+SDK=$(sa_sdk)
+
+# --- connection mode ---
+if [ "$SDK" -lt 30 ]; then
+    NEW_MODE=cable
+    sa_say "Android 10 o anterior: solo está disponible el modo por cable." \
+           "Android 10 or older: only the cable mode is available."
+else
+    sa_say "" ""
+    sa_say "Modo de conexión:" "Connection mode:"
+    sa_say "  wireless - depuración inalámbrica, sin cable (recomendado)" \
+           "  wireless - Wireless debugging, no cable (recommended)"
+    sa_say "  cable    - 'adb tcpip 5555' desde otro equipo en cada arranque" \
+           "  cable    - 'adb tcpip 5555' from another device on every boot"
+    ask NEW_MODE "Modo (wireless/cable)" "Mode (wireless/cable)" "$SA_MODE"
+    case "$NEW_MODE" in wireless|cable) ;; *) NEW_MODE="$SA_MODE" ;; esac
+fi
+
+NEW_APP="$SA_PORT_APP"
+NEW_PATTERN="$SA_PORT_PATTERN"
+NEW_PRIMING="$SA_PRIMING"
+
+if [ "$NEW_MODE" = wireless ]; then
+    sa_say "" ""
+    sa_say "Tras emparejar una vez, el puerto de la depuración inalámbrica se lee de una notificación de otra app que lo muestre." \
+           "After pairing once, the Wireless debugging port is read from a notification of another app that shows it."
+    sa_say "App recomendada: KeepADB (paquete de.hohnepeople.keepadb); además mantiene activa la depuración inalámbrica." \
+           "Recommended app: KeepADB (package de.hohnepeople.keepadb); it also keeps Wireless debugging switched on."
+    ask NEW_APP "Paquete de esa app ('-' = aceptar cualquier app)" \
+                "Package of that app ('-' = accept any app)" "${SA_PORT_APP:--}"
+    [ "$NEW_APP" = "-" ] && NEW_APP=""
+    sa_say "Filtro avanzado (opcional): expresión regular extendida que contenga el puerto, p. ej. 'Puerto.*[0-9]{5}'. Por defecto se busca 'Puerto'/'Port' + número y, como último recurso, un número de 5 dígitos en notificaciones que mencionen adb o depuración." \
+           "Advanced filter (optional): extended regular expression containing the port, e.g. 'Port.*[0-9]{5}'. By default 'Puerto'/'Port' + number is searched and, as a last resort, a 5-digit number in notifications that mention adb or debugging."
+    ask NEW_PATTERN "Filtro personalizado ('-' = ninguno)" "Custom filter ('-' = none)" "${SA_PORT_PATTERN:--}"
+    [ "$NEW_PATTERN" = "-" ] && NEW_PATTERN=""
+
+    sa_say "" ""
+    sa_say "Privacidad: leer notificaciones requiere dar a Termux:API acceso a TODAS las notificaciones. El script solo examina las de la app configurada y guarda únicamente el puerto." \
+           "Privacy: reading notifications needs giving Termux:API access to ALL notifications. The script only inspects the configured app's and stores only the port."
+    if ! command -v termux-notification-list >/dev/null 2>&1; then
+        sa_say "termux-api no está instalado: 'pkg install termux-api' y la app Termux:API (misma fuente que Termux). Sin eso solo se usará el último puerto conocido y el ingreso manual." \
+               "termux-api is not installed: 'pkg install termux-api' plus the Termux:API app (same source as Termux). Without it only the last known port and manual entry are used."
+    else
+        sa_say "Comprobando el acceso (puede abrirse una pantalla del sistema: concede el acceso a Termux:API y vuelve)..." \
+               "Checking access (a system screen may open: grant access to Termux:API and come back)..."
+        timeout 30 termux-notification-list >/dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            sa_say "Sin respuesta. Concede el acceso y pulsa Enter para reintentar." \
+                   "No response. Grant the access and press Enter to retry."
+            read -r _ || true
+            timeout 30 termux-notification-list >/dev/null 2>&1
+        fi
+        SA_PORT_APP="$NEW_APP"
+        SA_PORT_PATTERN="$NEW_PATTERN"
+        FOUND=$(sa_notif_ports | head -n1)
+        if [ -n "$FOUND" ]; then
+            sa_say "Puerto detectado ahora en las notificaciones: $FOUND" \
+                   "Port currently detected in notifications: $FOUND"
+        else
+            sa_say "Ahora no se detecta ningún puerto (¿depuración inalámbrica apagada o sin permiso?). Puedes repetir esto con shizuku-setup." \
+                   "No port is detected right now (Wireless debugging off, or no permission?). You can repeat this with shizuku-setup."
+        fi
+    fi
+else
+    sa_say "" ""
+    sa_say "Priming USB: antes de desconectar el cable, cambia el modo USB a otro y vuelve al que tenías, para evitar un cuelgue de la conexión en algunos equipos. auto = activo en modo cable; on = siempre; off = nunca." \
+           "USB priming: before the cable is unplugged, switches the USB mode to another one and back to yours, avoiding a connection freeze on some devices. auto = on in cable mode; on = always; off = never."
+    ask NEW_PRIMING "Priming (auto/on/off)" "Priming (auto/on/off)" "$SA_PRIMING"
+    case "$NEW_PRIMING" in auto|on|off) ;; *) NEW_PRIMING="$SA_PRIMING" ;; esac
+fi
+
+sa_say "" ""
+if [ "$SA_NOTIFY" = 1 ]; then DEF_N=Y; else DEF_N=N; fi
+if confirm "¿Mostrar notificaciones de estado (requiere Termux:API)?" \
+           "Show status notifications (needs Termux:API)?" "$DEF_N"; then
+    NEW_NOTIFY=1
+else
+    NEW_NOTIFY=0
+fi
+
+mkdir -p "$(dirname "$SA_CONF")"
+{
+    echo "# shizuku-semi-auto configuration (edit by hand or run shizuku-setup)"
+    echo "MODE=$NEW_MODE"
+    echo "PRIMING=$NEW_PRIMING"
+    echo "NOTIFY=$NEW_NOTIFY"
+    echo "PORT_APP=$NEW_APP"
+    echo "PORT_PATTERN=$NEW_PATTERN"
+} > "$SA_CONF"
+sa_load_config
+sa_say "Configuración guardada en $SA_CONF" "Configuration saved to $SA_CONF"
+
+# --- first connection ---
+sa_say "" ""
+if [ "$SA_MODE" = wireless ]; then
+    if confirm "¿Ejecutar shizuku-pair ahora (empareja si hace falta, busca el puerto y conecta)?" \
+               "Run shizuku-pair now (pairs if needed, finds the port, connects)?" Y; then
+        "$PREFIX/bin/shizuku-pair" || true
+    fi
+else
+    sa_say "Modo cable: conecta el cable y ejecuta 'adb tcpip 5555' desde el otro equipo; adb-connect lo detecta en un segundo." \
+           "Cable mode: plug the cable in and run 'adb tcpip 5555' from the other device; adb-connect detects it within a second."
+fi
+
+# --- optional: Android 12+ child-process limit ---
+SER=$(cat "$SA_STATE_FILE" 2>/dev/null)
+if [ "$SDK" -ge 31 ] && [ -n "$SER" ] && sa_alive "$SER"; then
+    CUR=$(timeout 8 "$SA_ADB" -s "$SER" shell "/system/bin/device_config get activity_manager max_phantom_processes" 2>/dev/null | tr -d '\r')
+    sa_say "" ""
+    sa_say "Opcional: Android 12+ limita los procesos secundarios en segundo plano y puede cerrar sesiones de Termux ('Process completed (signal 9)'). Valor actual: ${CUR:-desconocido}. Quitar el límite es un ajuste GLOBAL del sistema, aplicado por adb; los servicios de este paquete usan pocos procesos, así que normalmente no hace falta." \
+           "Optional: Android 12+ limits background child processes and can close Termux sessions ('Process completed (signal 9)'). Current value: ${CUR:-unknown}. Removing the limit is a GLOBAL system setting, applied through adb; this package's services use few processes, so it is usually not needed."
+    if confirm "¿Quitar el límite de procesos secundarios?" "Remove the child-process limit?" N; then
+        timeout 8 "$SA_ADB" -s "$SER" shell "/system/bin/device_config put activity_manager max_phantom_processes 2147483647" >/dev/null 2>&1
+        timeout 8 "$SA_ADB" -s "$SER" shell "settings put global settings_enable_monitor_phantom_procs false" >/dev/null 2>&1
+        sa_say "Ajuste aplicado." "Setting applied."
+    fi
+fi
+
+start_daemons
+sa_say "" ""
+sa_say "Servicios iniciados. Registros: ~/.local/tmp/adb-connect.log y ~/.local/tmp/shizuku-watchdog.log" \
+       "Services started. Logs: ~/.local/tmp/adb-connect.log and ~/.local/tmp/shizuku-watchdog.log"
+sa_say "Para cambiar algo más adelante, ejecuta shizuku-setup otra vez." \
+       "To change anything later, run shizuku-setup again."

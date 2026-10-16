@@ -1,14 +1,15 @@
 Package: shizuku-semi-auto
-Version: 1.2.2
+Version: 1.3.0
 Architecture: all
 Maintainer: estebanalpha
 Depends: android-tools
 Section: utils
 Priority: optional
 Description: Semi-automatic Shizuku activation via ADB loopback (Termux:Boot)
- Runs adb-connect and shizuku-watchdog at boot. Android 10-: detects
- "adb tcpip" mode from a second device and re-activates Shizuku. Android
- 11+: shizuku-pair helper for wireless-debugging pairing. Version-aware
- Shizuku start (13.6+ libshizuku.so glob, V4+ user_de, V3.x sdcard) and
- USB priming gated to Android 10 and below. Commands live in
- $PREFIX/bin; only Termux:Boot launchers are copied to $HOME.
+ Runs adb-connect and shizuku-watchdog at boot. Wireless mode (Android
+ 11+): after a one-time pairing, reconnects by itself, reading the port
+ from a notification. Cable mode: detects "adb tcpip" from a second
+ device, with optional USB priming that restores the user's USB mode.
+ Version-aware Shizuku start (13.6+ libshizuku.so glob, V4+ user_de, V3.x
+ sdcard). shizuku-setup configures everything interactively. Commands
+ live in $PREFIX/bin; only Termux:Boot launchers are copied to $HOME.
