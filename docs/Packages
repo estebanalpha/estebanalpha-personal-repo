@@ -31,22 +31,23 @@ SHA1: 7c1fda5d28b094222358800c21cb9031a57fdd94
 SHA256: e0afd5333cefec885796e72befb8e331a97ef017c7d0d6edf6b6e2c074df5498
 
 Package: shizuku-semi-auto
-Version: 1.2.2
+Version: 1.3.0
 Architecture: all
 Maintainer: estebanalpha
 Depends: android-tools
 Section: utils
 Priority: optional
 Description: Semi-automatic Shizuku activation via ADB loopback (Termux:Boot)
- Runs adb-connect and shizuku-watchdog at boot. Android 10-: detects
- "adb tcpip" mode from a second device and re-activates Shizuku. Android
- 11+: shizuku-pair helper for wireless-debugging pairing. Version-aware
- Shizuku start (13.6+ libshizuku.so glob, V4+ user_de, V3.x sdcard) and
- USB priming gated to Android 10 and below. Commands live in
- $PREFIX/bin; only Termux:Boot launchers are copied to $HOME.
-Filename: ./shizuku-semi-auto_1.2.2_all.deb
-Size: 10228
-MD5sum: 88910b19beb8174f0d3511948d4e8238
-SHA1: 5b3c8aad085d941ff7810ab89d6fbb9ca8a20393
-SHA256: 5e419bb08e4aaf0e770f2c7158b3bc20dfb13db73b378af1f6b2a5629d64d59d
+ Runs adb-connect and shizuku-watchdog at boot. Wireless mode (Android
+ 11+): after a one-time pairing, reconnects by itself, reading the port
+ from a notification. Cable mode: detects "adb tcpip" from a second
+ device, with optional USB priming that restores the user's USB mode.
+ Version-aware Shizuku start (13.6+ libshizuku.so glob, V4+ user_de, V3.x
+ sdcard). shizuku-setup configures everything interactively. Commands
+ live in $PREFIX/bin; only Termux:Boot launchers are copied to $HOME.
+Filename: ./shizuku-semi-auto_1.3.0_all.deb
+Size: 17438
+MD5sum: 295d883781c47bd1805e63962a336ea6
+SHA1: 5f8f9f6970faeb866d16df6fe2a672ef5b65db56
+SHA256: eddb75b66284596ccaed06a217847dbc79f64a6fd120a44fe79c2a975b9679a3
 
